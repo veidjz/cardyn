@@ -1,0 +1,35 @@
+:root {
+  --bg: #0b0d12;
+  --panel: #11141b;
+  --hair: #1b1f2a;
+  --track: #171b24;
+  --text: #e7e9ee;
+  --muted: #8a90a0;
+  --cpu: #3b82f6;
+  --mem: #22c55e;
+  --gpu: #a855f7;
+  --disk: #f59e0b;
+  --net: #ec4899;
+
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
