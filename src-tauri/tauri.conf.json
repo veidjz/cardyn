@@ -12,9 +12,16 @@
   "app": {
     "windows": [
       {
-        "title": "cardyn",
-        "width": 800,
-        "height": 600
+        "label": "main",
+        "title": "Cardyn",
+        "width": 778,
+        "height": 550,
+        "center": true,
+        "minWidth": 540,
+        "minHeight": 440,
+        "resizable": true,
+        "decorations": true,
+        "visible": true
       }
     ],
     "security": {
