@@ -5,7 +5,7 @@
 //! is part of the crate's public API and clippy does not flag dead code while
 //! the sampler that produces it is still to come.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 /// A single point-in-time snapshot of system metrics, serialized to camelCase
@@ -36,6 +36,23 @@ pub struct History {
     pub t: Vec<u64>,
     /// Series values aligned with `t`.
     pub v: Vec<f64>,
+}
+
+/// The canonical set of history series the frontend can request over IPC. The
+/// JSON values are camelCase (e.g. `"gpuUtil"`); an unknown value fails serde
+/// deserialization at the IPC boundary, surfacing as a typed error rather than
+/// a panic.
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HistoryMetric {
+    Cpu,
+    Mem,
+    GpuUtil,
+    GpuMem,
+    DiskRead,
+    DiskWrite,
+    NetRx,
+    NetTx,
 }
 
 /// Number of points retained in the live history window (~60 seconds at 1 Hz).
@@ -193,5 +210,26 @@ mod tests {
             rb.push(i, i as f64);
         }
         assert_eq!(rb.len(), HISTORY_CAPACITY);
+    }
+
+    #[test]
+    fn history_metric_deserializes_camel_case() {
+        assert_eq!(
+            serde_json::from_str::<HistoryMetric>("\"cpu\"").unwrap(),
+            HistoryMetric::Cpu
+        );
+        assert_eq!(
+            serde_json::from_str::<HistoryMetric>("\"gpuUtil\"").unwrap(),
+            HistoryMetric::GpuUtil
+        );
+        assert_eq!(
+            serde_json::from_str::<HistoryMetric>("\"netRx\"").unwrap(),
+            HistoryMetric::NetRx
+        );
+    }
+
+    #[test]
+    fn history_metric_rejects_unknown_value() {
+        assert!(serde_json::from_str::<HistoryMetric>("\"bogus\"").is_err());
     }
 }
