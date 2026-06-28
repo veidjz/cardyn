@@ -5,6 +5,9 @@
 //! fallback. Every reading is optional: an unavailable value is `None`
 //! (shown as "GPU N/A"), never a fake `0`.
 
+#[cfg(target_os = "macos")]
+pub mod macos;
+
 /// A single GPU reading. Each field is `None` when the underlying metric is
 /// unavailable on this machine / OS.
 #[derive(Debug, Clone)]
