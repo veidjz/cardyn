@@ -137,25 +137,112 @@ fn read_entry(entry: io_object_t) -> Option<GpuSample> {
     let perf: CFDictionary<CFString, CFType> =
         unsafe { CFDictionary::wrap_under_get_rule(perf.as_concrete_TypeRef()) };
 
-    let utilization = cf_number(&perf, DEVICE_UTILIZATION).and_then(|n| n.to_f32());
-    let mem_used = cf_number(&perf, IN_USE_SYSTEM_MEMORY)
-        .and_then(|n| n.to_i64())
-        .and_then(|bytes| u64::try_from(bytes).ok());
+    let sample = read_perf_stats(&perf);
 
-    if utilization.is_none() && mem_used.is_none() {
+    // Skip entries with no usable counters so `query` can try the next service.
+    if sample.utilization.is_none() && sample.mem_used.is_none() {
         return None;
     }
 
-    Some(GpuSample {
+    Some(sample)
+}
+
+/// Parse the GPU counters out of a `PerformanceStatistics` dictionary into a
+/// [`GpuSample`]. Each field degrades to `None` when its key is missing or holds
+/// a non-numeric value (missing/wrong type yields `None`, never a fake `0`).
+/// `vram_total` is always `None`: Apple Silicon's unified memory has no separate
+/// VRAM total.
+fn read_perf_stats(perf: &CFDictionary<CFString, CFType>) -> GpuSample {
+    let utilization = cf_number(perf, DEVICE_UTILIZATION).and_then(|n| n.to_f32());
+    let mem_used = cf_number(perf, IN_USE_SYSTEM_MEMORY)
+        .and_then(|n| n.to_i64())
+        .and_then(|bytes| u64::try_from(bytes).ok());
+
+    GpuSample {
         utilization,
         mem_used,
-        // Unified memory on Apple Silicon: no separate VRAM total.
         vram_total: None,
-    })
+    }
 }
 
 /// Look up `key` in `dict` and return it as a [`CFNumber`], or `None` if the key
 /// is missing or the value is not a number.
 fn cf_number(dict: &CFDictionary<CFString, CFType>, key: &str) -> Option<CFNumber> {
     dict.find(CFString::new(key))?.downcast::<CFNumber>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a `CFDictionary<CFString, CFType>` from `&str` keys and CF values,
+    /// matching the shape `read_perf_stats` receives from IOKit (no hardware).
+    fn dict(pairs: &[(&str, CFType)]) -> CFDictionary<CFString, CFType> {
+        let owned: Vec<(CFString, CFType)> = pairs
+            .iter()
+            .map(|(k, v)| (CFString::new(k), v.clone()))
+            .collect();
+        CFDictionary::from_CFType_pairs(&owned)
+    }
+
+    fn num_f32(v: f32) -> CFType {
+        CFNumber::from(v).as_CFType()
+    }
+
+    fn num_i64(v: i64) -> CFType {
+        CFNumber::from(v).as_CFType()
+    }
+
+    #[test]
+    fn both_keys_present_parse_to_some() {
+        let d = dict(&[
+            (DEVICE_UTILIZATION, num_f32(42.0)),
+            (IN_USE_SYSTEM_MEMORY, num_i64(8_000_000)),
+        ]);
+        let s = read_perf_stats(&d);
+        assert_eq!(s.utilization, Some(42.0));
+        assert_eq!(s.mem_used, Some(8_000_000));
+        assert!(s.vram_total.is_none());
+    }
+
+    #[test]
+    fn missing_utilization_yields_none_mem_still_some() {
+        let d = dict(&[(IN_USE_SYSTEM_MEMORY, num_i64(8_000_000))]);
+        let s = read_perf_stats(&d);
+        assert!(s.utilization.is_none());
+        assert_eq!(s.mem_used, Some(8_000_000));
+    }
+
+    #[test]
+    fn missing_memory_yields_none_util_still_some() {
+        let d = dict(&[(DEVICE_UTILIZATION, num_f32(42.0))]);
+        let s = read_perf_stats(&d);
+        assert_eq!(s.utilization, Some(42.0));
+        assert!(s.mem_used.is_none());
+    }
+
+    #[test]
+    fn wrong_value_type_yields_none() {
+        // A `CFString` where a `CFNumber` is expected: `downcast` fails to `None`
+        // instead of panicking or misreading bytes.
+        let d = dict(&[
+            (
+                DEVICE_UTILIZATION,
+                CFString::new("not a number").as_CFType(),
+            ),
+            (IN_USE_SYSTEM_MEMORY, num_i64(8_000_000)),
+        ]);
+        let s = read_perf_stats(&d);
+        assert!(s.utilization.is_none());
+        assert_eq!(s.mem_used, Some(8_000_000));
+    }
+
+    #[test]
+    fn empty_dict_is_all_none() {
+        let d = dict(&[]);
+        let s = read_perf_stats(&d);
+        assert!(s.utilization.is_none());
+        assert!(s.mem_used.is_none());
+        assert!(s.vram_total.is_none());
+    }
 }
