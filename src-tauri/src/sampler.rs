@@ -13,9 +13,10 @@
 //!
 //! [`tick`]: Sampler::tick
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{CpuRefreshKind, System};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::metrics::MetricsSnapshot;
 
@@ -82,6 +83,36 @@ impl Default for Sampler {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Spawn the background sampler thread that drives the live metrics feed.
+///
+/// The thread owns a [`Sampler`], samples at ~1 Hz, stores the latest snapshot
+/// and pushes CPU total into the shared ring buffer (both behind the managed
+/// [`AppState`](crate::AppState) mutexes), then emits a `metrics` event each
+/// tick. Nothing here may panic: mutex poisoning and emit errors are tolerated
+/// so a transient failure never tears down the loop.
+pub fn spawn(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut sampler = Sampler::new();
+        // Let the warm-up baseline age before the first real read so the first
+        // tick is a meaningful delta rather than the sysinfo zero sample.
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+        loop {
+            let snapshot = sampler.tick();
+            // `State` is fetched per lock rather than bound to a shared local:
+            // the `if let` scrutinee temporary borrows it, and inlining keeps the
+            // guard and its `State` dropping together (edition 2021 drop order).
+            if let Ok(mut history) = app.state::<crate::AppState>().cpu_history.lock() {
+                history.push(snapshot.ts_ms, snapshot.cpu_total as f64);
+            }
+            if let Ok(mut last) = app.state::<crate::AppState>().last.lock() {
+                *last = Some(snapshot.clone());
+            }
+            let _ = app.emit("metrics", snapshot);
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    });
 }
 
 /// Highest per-core frequency in MHz, or `None` when the slice is empty or every
