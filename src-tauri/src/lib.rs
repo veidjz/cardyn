@@ -72,6 +72,18 @@ pub fn run() {
     }
 
     builder
+        // Close-to-tray: the red close button hides the main window instead of
+        // quitting, keeping the sampler and tray alive. The app quits only via
+        // the tray "Quit" item or macOS Cmd+Q, neither of which is a window
+        // CloseRequested. Scoped to "main" so future windows are unaffected.
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             app.manage(AppState::default());
             // Built on the main thread here; a later task reaches it by id from
@@ -81,6 +93,19 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_history])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Clicking the macOS Dock icon of a running app fires a reopen event;
+            // show and focus the main window so it returns after close-to-tray hid
+            // it. Tolerate a missing window without panicking. Showing an already
+            // visible window is a harmless no-op, so there is no need to branch on
+            // has_visible_windows.
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }
