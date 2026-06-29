@@ -37,6 +37,10 @@ fn main() {
             "         netRxBps={} netTxBps={}",
             s.net_rx_bps, s.net_tx_bps,
         );
+        println!(
+            "         gpu: utilization={:?} memUsed={:?} vramTotal={:?}",
+            s.gpu.utilization, s.gpu.mem_used, s.gpu.vram_total,
+        );
         if i < 3 {
             sleep(Duration::from_secs(1));
         }

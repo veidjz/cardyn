@@ -20,6 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, Networks, System};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::gpu::GpuProvider;
 use crate::metrics::MetricsSnapshot;
 
 /// Samples CPU utilization and frequency from a long-lived `sysinfo::System`.
@@ -51,6 +52,11 @@ pub struct Sampler {
     /// Timestamp of the previous I/O sample, epoch milliseconds, for the disk and
     /// network rate deltas' shared `dt`.
     prev_ts_ms: u64,
+    /// GPU provider, queried once per tick. The sampler only sees the trait, so
+    /// the native macOS reader stays isolated and [`NoGpu`](crate::gpu::NoGpu) is
+    /// always a safe fallback. Constructed inside the sampler thread, so no
+    /// `Send` bound is needed.
+    gpu: Box<dyn GpuProvider>,
 }
 
 impl Sampler {
@@ -79,6 +85,13 @@ impl Sampler {
         // counters are already populated.
         let networks = Networks::new_with_refreshed_list();
         let (prev_net_rx, prev_net_tx) = net_io_totals(&networks);
+        // Select the GPU provider for this platform. `MacGpu` is a unit struct
+        // (infallible construction); off macOS there is no native reader, so the
+        // all-`None` `NoGpu` fallback keeps every GPU read optional (invariant 13).
+        #[cfg(target_os = "macos")]
+        let gpu: Box<dyn GpuProvider> = Box::new(crate::gpu::macos::MacGpu);
+        #[cfg(not(target_os = "macos"))]
+        let gpu: Box<dyn GpuProvider> = Box::new(crate::gpu::NoGpu);
         Self {
             system,
             cpu_refresh,
@@ -94,6 +107,7 @@ impl Sampler {
             prev_net_rx,
             prev_net_tx,
             prev_ts_ms: now_ms(),
+            gpu,
         }
     }
 
@@ -155,6 +169,10 @@ impl Sampler {
         self.prev_net_tx = now_net_tx;
         self.prev_ts_ms = snapshot_ts_ms;
 
+        // GPU: every field is `Option`, so a failed read degrades to "GPU N/A"
+        // rather than panicking the loop (invariant 13).
+        let gpu = self.gpu.sample();
+
         MetricsSnapshot {
             cpu_total,
             cpu_per_core,
@@ -165,6 +183,7 @@ impl Sampler {
             mem_free: self.system.free_memory(),
             swap_used: self.system.used_swap(),
             swap_total: self.system.total_swap(),
+            gpu,
             disk_used,
             disk_total,
             disk_read_bps,

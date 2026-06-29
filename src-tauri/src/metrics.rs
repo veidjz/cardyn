@@ -8,6 +8,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
+use crate::gpu::GpuSample;
+
 /// A single point-in-time snapshot of system metrics, serialized to camelCase
 /// JSON for the frontend.
 #[derive(Serialize, Clone)]
@@ -34,6 +36,10 @@ pub struct MetricsSnapshot {
     pub swap_used: u64,
     /// Total swap, bytes.
     pub swap_total: u64,
+    /// GPU reading for this tick. Each field is `None` ("GPU N/A") when the
+    /// metric is unavailable; on Apple Silicon `vramTotal` is always `null`
+    /// (unified memory, invariant 8).
+    pub gpu: GpuSample,
     /// Used space on the system volume (`/`), bytes. `0` when the system volume
     /// is unavailable (sentinel; the frontend renders `--` when
     /// `disk_total == 0`).
@@ -172,6 +178,11 @@ mod tests {
             mem_free: 6_000_000_000,
             swap_used: 1_000_000_000,
             swap_total: 2_000_000_000,
+            gpu: GpuSample {
+                utilization: Some(42.0),
+                mem_used: Some(8_000_000),
+                vram_total: None,
+            },
             disk_used: 250_000_000_000,
             disk_total: 500_000_000_000,
             disk_read_bps: 1_048_576,
@@ -190,6 +201,7 @@ mod tests {
         assert!(json.contains("\"memFree\""));
         assert!(json.contains("\"swapUsed\""));
         assert!(json.contains("\"swapTotal\""));
+        assert!(json.contains("\"gpu\""));
         assert!(json.contains("\"diskUsed\""));
         assert!(json.contains("\"diskTotal\""));
         assert!(json.contains("\"diskReadBps\""));
@@ -216,6 +228,11 @@ mod tests {
             mem_free: 0,
             swap_used: 0,
             swap_total: 0,
+            gpu: GpuSample {
+                utilization: None,
+                mem_used: None,
+                vram_total: None,
+            },
             disk_used: 0,
             disk_total: 0,
             disk_read_bps: 0,

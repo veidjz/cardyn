@@ -1,3 +1,9 @@
+export interface GpuSample {
+  utilization: number | null
+  memUsed: number | null
+  vramTotal: number | null
+}
+
 export interface MetricsSnapshot {
   cpuTotal: number
   cpuPerCore: number[]
@@ -8,6 +14,7 @@ export interface MetricsSnapshot {
   memFree: number
   swapUsed: number
   swapTotal: number
+  gpu: GpuSample
   diskUsed: number
   diskTotal: number
   diskReadBps: number
