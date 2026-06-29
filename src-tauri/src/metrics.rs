@@ -21,6 +21,19 @@ pub struct MetricsSnapshot {
     /// Maximum per-core frequency in MHz. `None` when unavailable (serialized
     /// as `null`).
     pub cpu_freq_mhz: Option<u64>,
+    /// Used physical memory, bytes. No app/wired/cache breakdown (ADR-023 /
+    /// invariant 20).
+    pub mem_used: u64,
+    /// Total physical memory, bytes.
+    pub mem_total: u64,
+    /// Available physical memory, bytes (memory reclaimable for new allocations).
+    pub mem_available: u64,
+    /// Free physical memory, bytes (unused, not counting reclaimable caches).
+    pub mem_free: u64,
+    /// Used swap, bytes.
+    pub swap_used: u64,
+    /// Total swap, bytes.
+    pub swap_total: u64,
     /// Snapshot timestamp, epoch milliseconds.
     pub ts_ms: u64,
 }
@@ -132,14 +145,28 @@ mod tests {
             cpu_total: 12.5,
             cpu_per_core: vec![1.0, 2.0],
             cpu_freq_mhz: Some(4800),
+            mem_used: 8_000_000_000,
+            mem_total: 16_000_000_000,
+            mem_available: 7_000_000_000,
+            mem_free: 6_000_000_000,
+            swap_used: 1_000_000_000,
+            swap_total: 2_000_000_000,
             ts_ms: 1,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
         assert!(json.contains("\"cpuTotal\""));
         assert!(json.contains("\"cpuPerCore\""));
         assert!(json.contains("\"cpuFreqMhz\""));
+        assert!(json.contains("\"memUsed\""));
+        assert!(json.contains("\"memTotal\""));
+        assert!(json.contains("\"memAvailable\""));
+        assert!(json.contains("\"memFree\""));
+        assert!(json.contains("\"swapUsed\""));
+        assert!(json.contains("\"swapTotal\""));
         assert!(json.contains("\"tsMs\""));
         assert!(!json.contains("cpu_total"));
+        assert!(!json.contains("mem_used"));
+        assert!(!json.contains("swap_total"));
     }
 
     #[test]
@@ -148,6 +175,12 @@ mod tests {
             cpu_total: 0.0,
             cpu_per_core: vec![],
             cpu_freq_mhz: None,
+            mem_used: 0,
+            mem_total: 0,
+            mem_available: 0,
+            mem_free: 0,
+            swap_used: 0,
+            swap_total: 0,
             ts_ms: 0,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");

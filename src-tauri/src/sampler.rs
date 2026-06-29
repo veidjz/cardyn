@@ -15,7 +15,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sysinfo::{CpuRefreshKind, System};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, System};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::metrics::MetricsSnapshot;
@@ -27,6 +27,9 @@ pub struct Sampler {
     /// Scoped refresh kind (CPU usage + frequency only), stored so every tick
     /// refreshes exactly the same fields.
     cpu_refresh: CpuRefreshKind,
+    /// Scoped refresh kind (RAM + swap only), stored so every tick refreshes
+    /// exactly the same fields.
+    mem_refresh: MemoryRefreshKind,
 }
 
 impl Sampler {
@@ -41,11 +44,16 @@ impl Sampler {
         // cost of enumerating processes, disks and networks.
         let mut system = System::new();
         let cpu_refresh = CpuRefreshKind::nothing().with_cpu_usage().with_frequency();
+        let mem_refresh = MemoryRefreshKind::nothing().with_ram().with_swap();
         // Warm-up: prime the baseline so the first tick is a real delta.
         system.refresh_cpu_specifics(cpu_refresh);
+        // Warm-up: prime memory so the first tick already has values. Memory is
+        // an absolute reading (not a delta), but priming keeps tick uniform.
+        system.refresh_memory_specifics(mem_refresh);
         Self {
             system,
             cpu_refresh,
+            mem_refresh,
         }
     }
 
@@ -55,6 +63,7 @@ impl Sampler {
     /// since the previous refresh (construction or the prior tick).
     pub fn tick(&mut self) -> MetricsSnapshot {
         self.system.refresh_cpu_specifics(self.cpu_refresh);
+        self.system.refresh_memory_specifics(self.mem_refresh);
 
         let cpu_total = self.system.global_cpu_usage();
         let cpu_per_core: Vec<f32> = self
@@ -74,6 +83,12 @@ impl Sampler {
             cpu_total,
             cpu_per_core,
             cpu_freq_mhz: max_freq_mhz(&per_core_freqs),
+            mem_used: self.system.used_memory(),
+            mem_total: self.system.total_memory(),
+            mem_available: self.system.available_memory(),
+            mem_free: self.system.free_memory(),
+            swap_used: self.system.used_swap(),
+            swap_total: self.system.total_swap(),
             ts_ms: now_ms(),
         }
     }

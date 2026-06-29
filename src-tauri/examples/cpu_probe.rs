@@ -25,6 +25,10 @@ fn main() {
             s.cpu_freq_mhz,
             s.ts_ms,
         );
+        println!(
+            "         memUsed={} memTotal={} memAvailable={} memFree={} swapUsed={} swapTotal={}",
+            s.mem_used, s.mem_total, s.mem_available, s.mem_free, s.swap_used, s.swap_total,
+        );
         if i < 3 {
             sleep(Duration::from_secs(1));
         }
