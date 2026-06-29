@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, System};
+use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, Networks, System};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::metrics::MetricsSnapshot;
@@ -39,8 +39,17 @@ pub struct Sampler {
     prev_disk_read: u64,
     /// Previous cumulative bytes written across all disks, for the rate delta.
     prev_disk_write: u64,
-    /// Timestamp of the previous disk sample, epoch milliseconds, for the rate
-    /// delta's `dt`.
+    /// Long-lived network interface list, reused across ticks so cumulative
+    /// rx/tx counters can be diffed into a throughput rate.
+    networks: Networks,
+    /// Previous cumulative bytes received across physical interfaces, for the
+    /// rate delta.
+    prev_net_rx: u64,
+    /// Previous cumulative bytes transmitted across physical interfaces, for the
+    /// rate delta.
+    prev_net_tx: u64,
+    /// Timestamp of the previous I/O sample, epoch milliseconds, for the disk and
+    /// network rate deltas' shared `dt`.
     prev_ts_ms: u64,
 }
 
@@ -66,6 +75,10 @@ impl Sampler {
         // are already populated.
         let disks = Disks::new_with_refreshed_list();
         let (prev_disk_read, prev_disk_write) = disk_io_totals(&disks);
+        // Interface list is refreshed on construction, so the cumulative rx/tx
+        // counters are already populated.
+        let networks = Networks::new_with_refreshed_list();
+        let (prev_net_rx, prev_net_tx) = net_io_totals(&networks);
         Self {
             system,
             cpu_refresh,
@@ -75,6 +88,11 @@ impl Sampler {
             // real rate, not a spike from a zero baseline.
             prev_disk_read,
             prev_disk_write,
+            networks,
+            // Seed from the current cumulative totals so the first tick reports a
+            // real rate, not a spike from a zero baseline.
+            prev_net_rx,
+            prev_net_tx,
             prev_ts_ms: now_ms(),
         }
     }
@@ -89,6 +107,9 @@ impl Sampler {
         // Refresh space + I/O for the existing disks; `true` drops disks that
         // disappeared so stale entries do not skew the I/O sum.
         self.disks.refresh(true);
+        // Refresh rx/tx for the existing interfaces; `true` drops interfaces that
+        // disappeared so stale entries do not skew the throughput sum.
+        self.networks.refresh(true);
 
         let cpu_total = self.system.global_cpu_usage();
         let cpu_per_core: Vec<f32> = self
@@ -117,14 +138,21 @@ impl Sampler {
             })
             .unwrap_or((0, 0));
 
-        // THROUGHPUT: diff cumulative I/O counters over the elapsed time.
+        // THROUGHPUT: diff cumulative I/O counters over the elapsed time. Disk
+        // and network share the same `dt`, computed once below; `prev_ts_ms` is
+        // updated exactly once at the end of the tick.
         let (now_read, now_write) = disk_io_totals(&self.disks);
+        let (now_net_rx, now_net_tx) = net_io_totals(&self.networks);
         let snapshot_ts_ms = now_ms();
         let dt_secs = (snapshot_ts_ms.saturating_sub(self.prev_ts_ms)) as f64 / 1000.0;
         let disk_read_bps = bytes_per_sec(self.prev_disk_read, now_read, dt_secs);
         let disk_write_bps = bytes_per_sec(self.prev_disk_write, now_write, dt_secs);
+        let net_rx_bps = bytes_per_sec(self.prev_net_rx, now_net_rx, dt_secs);
+        let net_tx_bps = bytes_per_sec(self.prev_net_tx, now_net_tx, dt_secs);
         self.prev_disk_read = now_read;
         self.prev_disk_write = now_write;
+        self.prev_net_rx = now_net_rx;
+        self.prev_net_tx = now_net_tx;
         self.prev_ts_ms = snapshot_ts_ms;
 
         MetricsSnapshot {
@@ -141,6 +169,8 @@ impl Sampler {
             disk_total,
             disk_read_bps,
             disk_write_bps,
+            net_rx_bps,
+            net_tx_bps,
             ts_ms: snapshot_ts_ms,
         }
     }
@@ -208,6 +238,25 @@ fn disk_io_totals(disks: &Disks) -> (u64, u64) {
     sum_distinct_io(&named)
 }
 
+/// Sum of cumulative `(received, transmitted)` bytes across physical network
+/// interfaces. Cumulative since the interface list was created; diff two samples
+/// over time to get a rate. Not pure (reads the interface list), so timing/IO
+/// stays out of [`is_physical_interface`] and [`sum_physical_net`].
+fn net_io_totals(networks: &Networks) -> (u64, u64) {
+    let ifaces: Vec<(String, u64, u64)> = networks
+        .list()
+        .iter()
+        .map(|(name, data)| {
+            (
+                name.clone(),
+                data.total_received(),
+                data.total_transmitted(),
+            )
+        })
+        .collect();
+    sum_physical_net(&ifaces)
+}
+
 /// Sum cumulative (read, written) byte counters across disks, counting each
 /// distinct disk *name* once. APFS synthetic volumes that share a physical
 /// container report the same name ("Macintosh HD" for both `/` and
@@ -227,6 +276,42 @@ fn sum_distinct_io(disks: &[(String, u64, u64)]) -> (u64, u64) {
                 (r, w)
             }
         })
+}
+
+/// Whether a macOS interface name is a physical NIC. Excludes loopback, VPN
+/// tunnels and virtual interfaces by name prefix (invariant 9). Heuristic by
+/// design (risk #13); the caller falls back to all interfaces if this filters
+/// everything out.
+fn is_physical_interface(name: &str) -> bool {
+    // Case-sensitive macOS prefixes: loopback, VPN tunnels, Apple wireless
+    // direct/low-latency, bridges, virtual/VM/host-only interfaces.
+    const EXCLUDED_PREFIXES: &[&str] = &[
+        "lo", "utun", "ipsec", "ppp", "awdl", "llw", "bridge", "ap", "gif", "stf", "anpi", "vmnet",
+        "vmenet", "vboxnet", "feth", "XHC",
+    ];
+    !EXCLUDED_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
+/// Sum (rx, tx) cumulative byte counters over physical interfaces; if NO
+/// interface is classified physical, fall back to summing all of them so the
+/// total is never stuck at 0 on a host whose NICs the heuristic misses.
+fn sum_physical_net(ifaces: &[(String, u64, u64)]) -> (u64, u64) {
+    let physical: Vec<&(String, u64, u64)> = ifaces
+        .iter()
+        .filter(|(name, _, _)| is_physical_interface(name))
+        .collect();
+    // Fallback (invariant 9 / risk #13): if the heuristic excluded every
+    // interface, sum all of them rather than report a stuck zero.
+    if physical.is_empty() {
+        return ifaces.iter().fold((0u64, 0u64), |(rx, tx), (_, r, t)| {
+            (rx.saturating_add(*r), tx.saturating_add(*t))
+        });
+    }
+    physical.iter().fold((0u64, 0u64), |(rx, tx), (_, r, t)| {
+        (rx.saturating_add(*r), tx.saturating_add(*t))
+    })
 }
 
 /// Bytes/second between two cumulative byte counters over `dt_secs`.
@@ -348,5 +433,53 @@ mod tests {
             ])),
             (151, 16)
         );
+    }
+
+    #[test]
+    fn is_physical_interface_keeps_ethernet_wifi() {
+        assert!(is_physical_interface("en0"));
+        assert!(is_physical_interface("en1"));
+    }
+
+    #[test]
+    fn is_physical_interface_excludes_virtual() {
+        assert!(!is_physical_interface("lo0"));
+        assert!(!is_physical_interface("utun3"));
+        assert!(!is_physical_interface("awdl0"));
+        assert!(!is_physical_interface("bridge0"));
+        assert!(!is_physical_interface("ipsec0"));
+        assert!(!is_physical_interface("vmnet1"));
+    }
+
+    #[test]
+    fn sum_physical_net_sums_only_physical() {
+        // en0 counted; lo0 and utun3 excluded.
+        assert_eq!(
+            sum_physical_net(&named(&[
+                ("en0", 1000, 200),
+                ("lo0", 5, 5),
+                ("utun3", 99, 99),
+            ])),
+            (1000, 200)
+        );
+    }
+
+    #[test]
+    fn sum_physical_net_falls_back_when_all_virtual() {
+        // No physical interface -> sum everything rather than report zero.
+        assert_eq!(
+            sum_physical_net(&named(&[("lo0", 5, 3), ("utun3", 10, 7)])),
+            (15, 10)
+        );
+    }
+
+    #[test]
+    fn sum_physical_net_empty_is_zero() {
+        assert_eq!(sum_physical_net(&[]), (0, 0));
+    }
+
+    #[test]
+    fn sum_physical_net_single_physical_is_itself() {
+        assert_eq!(sum_physical_net(&named(&[("en0", 42, 7)])), (42, 7));
     }
 }

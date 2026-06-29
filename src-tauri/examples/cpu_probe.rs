@@ -33,6 +33,10 @@ fn main() {
             "         diskUsed={} diskTotal={} diskReadBps={} diskWriteBps={}",
             s.disk_used, s.disk_total, s.disk_read_bps, s.disk_write_bps,
         );
+        println!(
+            "         netRxBps={} netTxBps={}",
+            s.net_rx_bps, s.net_tx_bps,
+        );
         if i < 3 {
             sleep(Duration::from_secs(1));
         }

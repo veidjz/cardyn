@@ -12,6 +12,8 @@ export interface MetricsSnapshot {
   diskTotal: number
   diskReadBps: number
   diskWriteBps: number
+  netRxBps: number
+  netTxBps: number
   tsMs: number
 }
 

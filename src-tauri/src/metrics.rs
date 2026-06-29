@@ -47,6 +47,14 @@ pub struct MetricsSnapshot {
     /// Disk write throughput, bytes/second, summed across physical disks over the
     /// last tick. `0` when unavailable.
     pub disk_write_bps: u64,
+    /// Network receive throughput, bytes/second, summed across physical
+    /// interfaces over the last tick (loopback/VPN/virtual excluded; invariant
+    /// 9). `0` when unavailable.
+    pub net_rx_bps: u64,
+    /// Network transmit throughput, bytes/second, summed across physical
+    /// interfaces over the last tick (loopback/VPN/virtual excluded; invariant
+    /// 9). `0` when unavailable.
+    pub net_tx_bps: u64,
     /// Snapshot timestamp, epoch milliseconds.
     pub ts_ms: u64,
 }
@@ -168,6 +176,8 @@ mod tests {
             disk_total: 500_000_000_000,
             disk_read_bps: 1_048_576,
             disk_write_bps: 524_288,
+            net_rx_bps: 2_097_152,
+            net_tx_bps: 131_072,
             ts_ms: 1,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
@@ -184,6 +194,8 @@ mod tests {
         assert!(json.contains("\"diskTotal\""));
         assert!(json.contains("\"diskReadBps\""));
         assert!(json.contains("\"diskWriteBps\""));
+        assert!(json.contains("\"netRxBps\""));
+        assert!(json.contains("\"netTxBps\""));
         assert!(json.contains("\"tsMs\""));
         assert!(!json.contains("cpu_total"));
         assert!(!json.contains("mem_used"));
@@ -208,6 +220,8 @@ mod tests {
             disk_total: 0,
             disk_read_bps: 0,
             disk_write_bps: 0,
+            net_rx_bps: 0,
+            net_tx_bps: 0,
             ts_ms: 0,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
