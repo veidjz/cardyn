@@ -7,6 +7,7 @@ use crate::metrics::{MetricsSnapshot, RingBuffer};
 pub mod gpu;
 pub mod metrics;
 pub mod sampler;
+mod tray;
 
 /// Shared application state behind the Tauri managed-state registry.
 ///
@@ -73,6 +74,9 @@ pub fn run() {
     builder
         .setup(|app| {
             app.manage(AppState::default());
+            // Built on the main thread here; a later task reaches it by id from
+            // the sampler thread to update the title.
+            tray::build(app)?;
             sampler::spawn(app.handle().clone());
             Ok(())
         })
