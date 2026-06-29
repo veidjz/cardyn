@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ringFraction, sparklinePoints } from '../chart'
+import { ringFraction, sparklineMax, sparklinePoints } from '../chart'
 
 describe('ringFraction', () => {
   it('returns 0 for null', () => {
@@ -16,6 +16,24 @@ describe('ringFraction', () => {
 
   it('clamps below 0 to 0', () => {
     expect(ringFraction(-5, 100)).toBe(0)
+  })
+})
+
+describe('sparklineMax', () => {
+  it('returns floor for an empty window', () => {
+    expect(sparklineMax([], 1)).toBe(1)
+  })
+
+  it('returns floor when all values are below it', () => {
+    expect(sparklineMax([0, 0.2, 0.5], 1)).toBe(1)
+  })
+
+  it('returns the window max when a value exceeds floor', () => {
+    expect(sparklineMax([0, 5, 2], 1)).toBe(5)
+  })
+
+  it('ignores negatives and stays at floor', () => {
+    expect(sparklineMax([-10, -3], 1)).toBe(1)
   })
 })
 

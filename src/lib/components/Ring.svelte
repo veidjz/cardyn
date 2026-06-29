@@ -6,8 +6,8 @@
     value,
     max = 100,
     color = 'var(--cpu)',
-    size = 132,
-    stroke = 12,
+    size = 108,
+    stroke = 9,
   }: {
     value: number | null
     max?: number
@@ -45,7 +45,13 @@
       transform="rotate(-90 {center} {center})"
     />
   </svg>
-  <div class="label" class:muted={value === null}>{formatPercent(value)}</div>
+  <div
+    class="label"
+    class:muted={value === null}
+    style="font-size: {size * 0.2}px"
+  >
+    {formatPercent(value)}
+  </div>
 </div>
 
 <style>
@@ -65,7 +71,6 @@
 
   .label {
     position: absolute;
-    font-size: 1.6rem;
     font-weight: 600;
     color: var(--text);
   }

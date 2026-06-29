@@ -25,6 +25,36 @@ fn main() {
             s.cpu_freq_mhz,
             s.ts_ms,
         );
+        println!(
+            "         memUsed={} memTotal={} memAvailable={} memFree={} swapUsed={} swapTotal={}",
+            s.mem_used, s.mem_total, s.mem_available, s.mem_free, s.swap_used, s.swap_total,
+        );
+        println!(
+            "         diskUsed={} diskTotal={} diskReadBps={} diskWriteBps={}",
+            s.disk_used, s.disk_total, s.disk_read_bps, s.disk_write_bps,
+        );
+        println!(
+            "         netRxBps={} netTxBps={}",
+            s.net_rx_bps, s.net_tx_bps,
+        );
+        println!(
+            "         gpu: utilization={:?} memUsed={:?} vramTotal={:?}",
+            s.gpu.utilization, s.gpu.mem_used, s.gpu.vram_total,
+        );
+        println!("         top by cpu:");
+        for p in s.top_by_cpu.iter().take(3) {
+            println!(
+                "           pid={} name={:?} cpuPct={:.1} memBytes={}",
+                p.pid, p.name, p.cpu_pct, p.mem_bytes,
+            );
+        }
+        println!("         top by mem:");
+        for p in s.top_by_mem.iter().take(3) {
+            println!(
+                "           pid={} name={:?} cpuPct={:.1} memBytes={}",
+                p.pid, p.name, p.cpu_pct, p.mem_bytes,
+            );
+        }
         if i < 3 {
             sleep(Duration::from_secs(1));
         }

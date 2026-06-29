@@ -8,6 +8,24 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
+use crate::gpu::GpuSample;
+
+/// A single process row for the "top processes" tables sent to the frontend.
+/// `cpu_pct` is normalized to 0..=100 (the summed-across-cores reading divided
+/// by the core count, ADR-013); `mem_bytes` is resident memory in bytes.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcRow {
+    /// Process identifier.
+    pub pid: u32,
+    /// Process name.
+    pub name: String,
+    /// Normalized CPU usage, 0..=100 percent.
+    pub cpu_pct: f32,
+    /// Resident memory, bytes.
+    pub mem_bytes: u64,
+}
+
 /// A single point-in-time snapshot of system metrics, serialized to camelCase
 /// JSON for the frontend.
 #[derive(Serialize, Clone)]
@@ -21,8 +39,70 @@ pub struct MetricsSnapshot {
     /// Maximum per-core frequency in MHz. `None` when unavailable (serialized
     /// as `null`).
     pub cpu_freq_mhz: Option<u64>,
+    /// Used physical memory, bytes. No app/wired/cache breakdown (ADR-023 /
+    /// invariant 20).
+    pub mem_used: u64,
+    /// Total physical memory, bytes.
+    pub mem_total: u64,
+    /// Available physical memory, bytes (memory reclaimable for new allocations).
+    pub mem_available: u64,
+    /// Free physical memory, bytes (unused, not counting reclaimable caches).
+    pub mem_free: u64,
+    /// Used swap, bytes.
+    pub swap_used: u64,
+    /// Total swap, bytes.
+    pub swap_total: u64,
+    /// GPU reading for this tick. Each field is `None` ("GPU N/A") when the
+    /// metric is unavailable; on Apple Silicon `vramTotal` is always `null`
+    /// (unified memory, invariant 8).
+    pub gpu: GpuSample,
+    /// Used space on the system volume (`/`), bytes. `0` when the system volume
+    /// is unavailable (sentinel; the frontend renders `--` when
+    /// `disk_total == 0`).
+    pub disk_used: u64,
+    /// Total space on the system volume (`/`), bytes. `0` when the system volume
+    /// is unavailable (sentinel).
+    pub disk_total: u64,
+    /// Disk read throughput, bytes/second, summed across physical disks over the
+    /// last tick. `0` when unavailable.
+    pub disk_read_bps: u64,
+    /// Disk write throughput, bytes/second, summed across physical disks over the
+    /// last tick. `0` when unavailable.
+    pub disk_write_bps: u64,
+    /// Network receive throughput, bytes/second, summed across physical
+    /// interfaces over the last tick (loopback/VPN/virtual excluded; invariant
+    /// 9). `0` when unavailable.
+    pub net_rx_bps: u64,
+    /// Network transmit throughput, bytes/second, summed across physical
+    /// interfaces over the last tick (loopback/VPN/virtual excluded; invariant
+    /// 9). `0` when unavailable.
+    pub net_tx_bps: u64,
+    /// Top 5 processes by normalized CPU usage, highest first (ADR-025). The
+    /// full list is cut to the top N in the backend (invariant 3).
+    pub top_by_cpu: Vec<ProcRow>,
+    /// Top 5 processes by resident memory in bytes, highest first. The full
+    /// list is cut to the top N in the backend (invariant 3).
+    pub top_by_mem: Vec<ProcRow>,
     /// Snapshot timestamp, epoch milliseconds.
     pub ts_ms: u64,
+}
+
+/// Return the `n` rows with the highest `cpu_pct`, highest first. Pure.
+pub fn top_by_cpu(rows: &[ProcRow], n: usize) -> Vec<ProcRow> {
+    let mut sorted = rows.to_vec();
+    // `total_cmp` gives a total order over f32 (NaN-safe), so a tie or a stray
+    // NaN reading sorts deterministically instead of panicking.
+    sorted.sort_by(|a, b| b.cpu_pct.total_cmp(&a.cpu_pct));
+    sorted.truncate(n);
+    sorted
+}
+
+/// Return the `n` rows with the highest `mem_bytes`, highest first. Pure.
+pub fn top_by_mem(rows: &[ProcRow], n: usize) -> Vec<ProcRow> {
+    let mut sorted = rows.to_vec();
+    sorted.sort_by_key(|r| std::cmp::Reverse(r.mem_bytes));
+    sorted.truncate(n);
+    sorted
 }
 
 /// A history snapshot of one metric series, in the uPlot-friendly parallel
@@ -132,14 +212,52 @@ mod tests {
             cpu_total: 12.5,
             cpu_per_core: vec![1.0, 2.0],
             cpu_freq_mhz: Some(4800),
+            mem_used: 8_000_000_000,
+            mem_total: 16_000_000_000,
+            mem_available: 7_000_000_000,
+            mem_free: 6_000_000_000,
+            swap_used: 1_000_000_000,
+            swap_total: 2_000_000_000,
+            gpu: GpuSample {
+                utilization: Some(42.0),
+                mem_used: Some(8_000_000),
+                vram_total: None,
+            },
+            disk_used: 250_000_000_000,
+            disk_total: 500_000_000_000,
+            disk_read_bps: 1_048_576,
+            disk_write_bps: 524_288,
+            net_rx_bps: 2_097_152,
+            net_tx_bps: 131_072,
+            top_by_cpu: vec![],
+            top_by_mem: vec![],
             ts_ms: 1,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
         assert!(json.contains("\"cpuTotal\""));
         assert!(json.contains("\"cpuPerCore\""));
         assert!(json.contains("\"cpuFreqMhz\""));
+        assert!(json.contains("\"memUsed\""));
+        assert!(json.contains("\"memTotal\""));
+        assert!(json.contains("\"memAvailable\""));
+        assert!(json.contains("\"memFree\""));
+        assert!(json.contains("\"swapUsed\""));
+        assert!(json.contains("\"swapTotal\""));
+        assert!(json.contains("\"gpu\""));
+        assert!(json.contains("\"diskUsed\""));
+        assert!(json.contains("\"diskTotal\""));
+        assert!(json.contains("\"diskReadBps\""));
+        assert!(json.contains("\"diskWriteBps\""));
+        assert!(json.contains("\"netRxBps\""));
+        assert!(json.contains("\"netTxBps\""));
+        assert!(json.contains("\"topByCpu\""));
+        assert!(json.contains("\"topByMem\""));
         assert!(json.contains("\"tsMs\""));
         assert!(!json.contains("cpu_total"));
+        assert!(!json.contains("mem_used"));
+        assert!(!json.contains("swap_total"));
+        assert!(!json.contains("disk_used"));
+        assert!(!json.contains("disk_read_bps"));
     }
 
     #[test]
@@ -148,6 +266,25 @@ mod tests {
             cpu_total: 0.0,
             cpu_per_core: vec![],
             cpu_freq_mhz: None,
+            mem_used: 0,
+            mem_total: 0,
+            mem_available: 0,
+            mem_free: 0,
+            swap_used: 0,
+            swap_total: 0,
+            gpu: GpuSample {
+                utilization: None,
+                mem_used: None,
+                vram_total: None,
+            },
+            disk_used: 0,
+            disk_total: 0,
+            disk_read_bps: 0,
+            disk_write_bps: 0,
+            net_rx_bps: 0,
+            net_tx_bps: 0,
+            top_by_cpu: vec![],
+            top_by_mem: vec![],
             ts_ms: 0,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
@@ -231,5 +368,78 @@ mod tests {
     #[test]
     fn history_metric_rejects_unknown_value() {
         assert!(serde_json::from_str::<HistoryMetric>("\"bogus\"").is_err());
+    }
+
+    fn proc(pid: u32, cpu: f32, mem: u64) -> ProcRow {
+        ProcRow {
+            pid,
+            name: format!("p{pid}"),
+            cpu_pct: cpu,
+            mem_bytes: mem,
+        }
+    }
+
+    #[test]
+    fn top_by_cpu_orders_desc_and_truncates_to_n() {
+        let rows = vec![
+            proc(1, 10.0, 0),
+            proc(2, 90.0, 0),
+            proc(3, 50.0, 0),
+            proc(4, 30.0, 0),
+            proc(5, 70.0, 0),
+            proc(6, 5.0, 0),
+            proc(7, 99.0, 0),
+        ];
+        let top = top_by_cpu(&rows, 5);
+        assert_eq!(top.len(), 5);
+        let pids: Vec<u32> = top.iter().map(|r| r.pid).collect();
+        assert_eq!(pids, vec![7, 2, 5, 3, 4]);
+    }
+
+    #[test]
+    fn top_by_cpu_fewer_than_n_returns_all_sorted() {
+        let rows = vec![proc(1, 10.0, 0), proc(2, 30.0, 0), proc(3, 20.0, 0)];
+        let pids: Vec<u32> = top_by_cpu(&rows, 5).iter().map(|r| r.pid).collect();
+        assert_eq!(pids, vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn top_by_cpu_empty_is_empty() {
+        assert!(top_by_cpu(&[], 5).is_empty());
+    }
+
+    #[test]
+    fn top_by_cpu_tie_does_not_panic() {
+        let rows = vec![proc(1, 50.0, 0), proc(2, 50.0, 0), proc(3, 50.0, 0)];
+        assert_eq!(top_by_cpu(&rows, 2).len(), 2);
+    }
+
+    #[test]
+    fn top_by_mem_orders_desc_and_truncates_to_n() {
+        let rows = vec![
+            proc(1, 0.0, 100),
+            proc(2, 0.0, 900),
+            proc(3, 0.0, 500),
+            proc(4, 0.0, 300),
+            proc(5, 0.0, 700),
+            proc(6, 0.0, 50),
+            proc(7, 0.0, 999),
+        ];
+        let top = top_by_mem(&rows, 5);
+        assert_eq!(top.len(), 5);
+        let pids: Vec<u32> = top.iter().map(|r| r.pid).collect();
+        assert_eq!(pids, vec![7, 2, 5, 3, 4]);
+    }
+
+    #[test]
+    fn top_by_mem_fewer_than_n_returns_all_sorted() {
+        let rows = vec![proc(1, 0.0, 10), proc(2, 0.0, 30), proc(3, 0.0, 20)];
+        let pids: Vec<u32> = top_by_mem(&rows, 5).iter().map(|r| r.pid).collect();
+        assert_eq!(pids, vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn top_by_mem_empty_is_empty() {
+        assert!(top_by_mem(&[], 5).is_empty());
     }
 }

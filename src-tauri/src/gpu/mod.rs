@@ -5,12 +5,16 @@
 //! fallback. Every reading is optional: an unavailable value is `None`
 //! (shown as "GPU N/A"), never a fake `0`.
 
+use serde::Serialize;
+
 #[cfg(target_os = "macos")]
 pub mod macos;
 
 /// A single GPU reading. Each field is `None` when the underlying metric is
-/// unavailable on this machine / OS.
-#[derive(Debug, Clone)]
+/// unavailable on this machine / OS. Serialized to camelCase JSON for the
+/// frontend (`utilization`/`memUsed`/`vramTotal`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GpuSample {
     /// GPU utilization, 0..=100 percent.
     pub utilization: Option<f32>,
@@ -52,5 +56,33 @@ mod tests {
         assert!(s.utilization.is_none());
         assert!(s.mem_used.is_none());
         assert!(s.vram_total.is_none());
+    }
+
+    #[test]
+    fn gpu_sample_serializes_camel_case() {
+        let sample = GpuSample {
+            utilization: Some(42.0),
+            mem_used: Some(8_000_000),
+            vram_total: Some(16_000_000_000),
+        };
+        let json = serde_json::to_string(&sample).expect("serialize");
+        assert!(json.contains("\"utilization\""));
+        assert!(json.contains("\"memUsed\""));
+        assert!(json.contains("\"vramTotal\""));
+        assert!(!json.contains("mem_used"));
+        assert!(!json.contains("vram_total"));
+    }
+
+    #[test]
+    fn gpu_sample_none_serializes_null() {
+        let sample = GpuSample {
+            utilization: None,
+            mem_used: None,
+            vram_total: None,
+        };
+        let json = serde_json::to_string(&sample).expect("serialize");
+        assert!(json.contains("\"utilization\":null"));
+        assert!(json.contains("\"memUsed\":null"));
+        assert!(json.contains("\"vramTotal\":null"));
     }
 }
