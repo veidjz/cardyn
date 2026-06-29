@@ -47,3 +47,5 @@ export interface History {
   t: number[]
   v: number[]
 }
+
+export type MetricKey = 'cpu' | 'mem' | 'gpu' | 'disk' | 'net'
