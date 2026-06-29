@@ -3,6 +3,7 @@
   import { metricMeta } from '$lib/metric-meta'
   import { formatBytes, formatBps } from '$lib/format'
   import Ring from '$lib/components/Ring.svelte'
+  import HistoryChart from '$lib/components/HistoryChart.svelte'
   import type { MetricKey } from '$lib/types'
 
   let { metric, onBack }: { metric: MetricKey; onBack: () => void } = $props()
@@ -63,6 +64,8 @@
       >
     {/if}
   </div>
+
+  <HistoryChart {metric} />
 </section>
 
 <style>

@@ -1,5 +1,66 @@
 import { describe, it, expect } from 'vitest'
-import { ringFraction, sparklineMax, sparklinePoints } from '../chart'
+import {
+  ringFraction,
+  sparklineMax,
+  sparklinePoints,
+  chartSeries,
+  alignSeries,
+} from '../chart'
+
+describe('chartSeries', () => {
+  it('maps single-line metrics to one series', () => {
+    expect(chartSeries('cpu')).toEqual([{ series: 'cpu', label: 'CPU' }])
+    expect(chartSeries('mem')).toEqual([{ series: 'mem', label: 'Used' }])
+    expect(chartSeries('gpu')).toEqual([
+      { series: 'gpuUtil', label: 'Utilization' },
+    ])
+  })
+
+  it('maps disk and network to two series each', () => {
+    expect(chartSeries('disk')).toEqual([
+      { series: 'diskRead', label: 'Read' },
+      { series: 'diskWrite', label: 'Write' },
+    ])
+    expect(chartSeries('net')).toEqual([
+      { series: 'netRx', label: 'Down' },
+      { series: 'netTx', label: 'Up' },
+    ])
+  })
+})
+
+describe('alignSeries', () => {
+  it('returns [] for empty input', () => {
+    expect(alignSeries([])).toEqual([])
+  })
+
+  it('leaves equal-length columns unchanged', () => {
+    expect(
+      alignSeries([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]),
+    ).toEqual([
+      [1, 2, 3],
+      [4, 5, 6],
+    ])
+  })
+
+  it('truncates to the shortest, keeping the most recent points', () => {
+    expect(
+      alignSeries([
+        [1, 2, 3, 4],
+        [5, 6],
+      ]),
+    ).toEqual([
+      [3, 4],
+      [5, 6],
+    ])
+  })
+
+  it('collapses to empty columns when one column is empty', () => {
+    expect(alignSeries([[1, 2], []])).toEqual([[], []])
+  })
+})
 
 describe('ringFraction', () => {
   it('returns 0 for null', () => {
