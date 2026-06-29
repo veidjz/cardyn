@@ -260,6 +260,13 @@ pub fn spawn(app: AppHandle) {
             if let Ok(mut last) = app.state::<crate::AppState>().last.lock() {
                 *last = Some(snapshot.clone());
             }
+            // Refresh the menu-bar title before `emit` moves the snapshot.
+            crate::tray::update_title(
+                &app,
+                snapshot.cpu_total,
+                snapshot.mem_used,
+                snapshot.mem_total,
+            );
             let _ = app.emit("metrics", snapshot);
             std::thread::sleep(Duration::from_secs(1));
         }

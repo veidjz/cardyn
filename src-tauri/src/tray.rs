@@ -1,16 +1,16 @@
-//! Menu-bar (tray) item: a static icon, a placeholder title and a minimal menu.
+//! Menu-bar (tray) item: an icon, a live CPU/RAM title and a minimal menu.
 //!
-//! This is the static tray built once on the main thread in `setup`. The live
-//! title (CPU/RAM numbers) is wired in a later task, which fetches this tray by
-//! [`TRAY_ID`] via `app.tray_by_id(...)` from the sampler thread, so the id must
-//! stay a shared constant rather than a magic string.
+//! [`build`] runs once on the main thread in `setup` and seeds the title with a
+//! placeholder. Each sampler tick then calls [`update_title`], which fetches this
+//! tray by [`TRAY_ID`] via `app.tray_by_id(...)` from the sampler thread, so the
+//! id must stay a shared constant rather than a magic string.
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Manager};
 
-/// Stable id of the menu-bar tray, shared so a later task can retrieve the tray
-/// (`app.tray_by_id(TRAY_ID)`) to update its title.
+/// Stable id of the menu-bar tray, shared so [`update_title`] can retrieve the
+/// tray (`app.tray_by_id(TRAY_ID)`) to refresh its title each tick.
 pub const TRAY_ID: &str = "main-tray";
 
 /// Placeholder title shown until live values replace it (invariant 12: never a
@@ -70,5 +70,67 @@ fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
+    }
+}
+
+/// Format the live tray title from raw metric scalars.
+///
+/// Returns `"CPU {c}% RAM {m}%"`, where `c` is `cpu_total` and `m` is the memory
+/// percentage (`mem_used / mem_total`), each rounded to the nearest integer and
+/// clamped to `0..=100`. The memory ratio is computed in `f64` to avoid precision
+/// loss and overflow on large byte counts.
+///
+/// When `mem_total` is `0` there is no real sample yet, so RAM renders as
+/// `"RAM --"` rather than a false `0%` (invariant 12), matching the `--` style of
+/// [`TITLE_PLACEHOLDER`] (e.g. `"CPU 12% RAM --"`).
+pub fn format_title(cpu_total: f32, mem_used: u64, mem_total: u64) -> String {
+    let cpu = (cpu_total.round() as i64).clamp(0, 100);
+    if mem_total == 0 {
+        return format!("CPU {cpu}% RAM --");
+    }
+    let mem = ((mem_used as f64 / mem_total as f64 * 100.0).round() as i64).clamp(0, 100);
+    format!("CPU {cpu}% RAM {mem}%")
+}
+
+/// Update the live tray title from the latest metric scalars.
+///
+/// Fetches the tray by [`TRAY_ID`] and sets its title to [`format_title`]'s
+/// output. A missing tray (`None`) and a transient `set_title` error are both
+/// tolerated silently, so a single failure never tears down the sampler loop that
+/// calls this once per tick.
+pub fn update_title(app: &AppHandle, cpu_total: f32, mem_used: u64, mem_total: u64) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_title(Some(format_title(cpu_total, mem_used, mem_total)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_title_typical() {
+        assert_eq!(format_title(12.0, 8_000, 16_000), "CPU 12% RAM 50%");
+    }
+
+    #[test]
+    fn format_title_full_load() {
+        assert_eq!(format_title(100.0, 16_000, 16_000), "CPU 100% RAM 100%");
+    }
+
+    #[test]
+    fn format_title_zero_mem_total_renders_dashes() {
+        assert_eq!(format_title(12.0, 0, 0), "CPU 12% RAM --");
+    }
+
+    #[test]
+    fn format_title_rounds_to_nearest() {
+        // CPU 12.6 -> 13; mem 5/8 = 62.5% -> 63 (round half away from zero).
+        assert_eq!(format_title(12.6, 5, 8), "CPU 13% RAM 63%");
+    }
+
+    #[test]
+    fn format_title_clamps_above_100() {
+        assert_eq!(format_title(150.0, 20, 10), "CPU 100% RAM 100%");
     }
 }
