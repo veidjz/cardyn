@@ -26,6 +26,12 @@ export function chartSeries(metric: MetricKey): ChartSeries[] {
   return seriesByMetric[metric]
 }
 
+// Metrics whose series are percentages (0-100) and so warrant a fixed y-domain,
+// matching their gauges. Bytes/throughput metrics stay auto-scaled.
+export function isPercentMetric(metric: MetricKey): boolean {
+  return metric === 'cpu' || metric === 'gpu'
+}
+
 // Truncate every column of a uPlot data matrix [xs, ...ys] to the shortest
 // column length, keeping the most recent points (the tail). Defensive guard for
 // series whose backfilled lengths may differ. Empty input -> [].

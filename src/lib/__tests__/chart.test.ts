@@ -5,6 +5,7 @@ import {
   sparklinePoints,
   chartSeries,
   alignSeries,
+  isPercentMetric,
 } from '../chart'
 
 describe('chartSeries', () => {
@@ -25,6 +26,19 @@ describe('chartSeries', () => {
       { series: 'netRx', label: 'Down' },
       { series: 'netTx', label: 'Up' },
     ])
+  })
+})
+
+describe('isPercentMetric', () => {
+  it('is true for percentage metrics', () => {
+    expect(isPercentMetric('cpu')).toBe(true)
+    expect(isPercentMetric('gpu')).toBe(true)
+  })
+
+  it('is false for byte/throughput metrics', () => {
+    expect(isPercentMetric('mem')).toBe(false)
+    expect(isPercentMetric('disk')).toBe(false)
+    expect(isPercentMetric('net')).toBe(false)
   })
 })
 

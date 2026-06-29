@@ -46,3 +46,10 @@ export function formatBps(bytesPerSec: number | null): string {
   if (bytesPerSec === null) return '--'
   return `${scaleBytes(bytesPerSec)}/s`
 }
+
+// Local wall-clock HH:MM:SS (zero-padded) for a unix-seconds timestamp.
+export function formatClock(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
