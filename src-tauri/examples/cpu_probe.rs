@@ -29,6 +29,10 @@ fn main() {
             "         memUsed={} memTotal={} memAvailable={} memFree={} swapUsed={} swapTotal={}",
             s.mem_used, s.mem_total, s.mem_available, s.mem_free, s.swap_used, s.swap_total,
         );
+        println!(
+            "         diskUsed={} diskTotal={} diskReadBps={} diskWriteBps={}",
+            s.disk_used, s.disk_total, s.disk_read_bps, s.disk_write_bps,
+        );
         if i < 3 {
             sleep(Duration::from_secs(1));
         }

@@ -34,6 +34,19 @@ pub struct MetricsSnapshot {
     pub swap_used: u64,
     /// Total swap, bytes.
     pub swap_total: u64,
+    /// Used space on the system volume (`/`), bytes. `0` when the system volume
+    /// is unavailable (sentinel; the frontend renders `--` when
+    /// `disk_total == 0`).
+    pub disk_used: u64,
+    /// Total space on the system volume (`/`), bytes. `0` when the system volume
+    /// is unavailable (sentinel).
+    pub disk_total: u64,
+    /// Disk read throughput, bytes/second, summed across physical disks over the
+    /// last tick. `0` when unavailable.
+    pub disk_read_bps: u64,
+    /// Disk write throughput, bytes/second, summed across physical disks over the
+    /// last tick. `0` when unavailable.
+    pub disk_write_bps: u64,
     /// Snapshot timestamp, epoch milliseconds.
     pub ts_ms: u64,
 }
@@ -151,6 +164,10 @@ mod tests {
             mem_free: 6_000_000_000,
             swap_used: 1_000_000_000,
             swap_total: 2_000_000_000,
+            disk_used: 250_000_000_000,
+            disk_total: 500_000_000_000,
+            disk_read_bps: 1_048_576,
+            disk_write_bps: 524_288,
             ts_ms: 1,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
@@ -163,10 +180,16 @@ mod tests {
         assert!(json.contains("\"memFree\""));
         assert!(json.contains("\"swapUsed\""));
         assert!(json.contains("\"swapTotal\""));
+        assert!(json.contains("\"diskUsed\""));
+        assert!(json.contains("\"diskTotal\""));
+        assert!(json.contains("\"diskReadBps\""));
+        assert!(json.contains("\"diskWriteBps\""));
         assert!(json.contains("\"tsMs\""));
         assert!(!json.contains("cpu_total"));
         assert!(!json.contains("mem_used"));
         assert!(!json.contains("swap_total"));
+        assert!(!json.contains("disk_used"));
+        assert!(!json.contains("disk_read_bps"));
     }
 
     #[test]
@@ -181,6 +204,10 @@ mod tests {
             mem_free: 0,
             swap_used: 0,
             swap_total: 0,
+            disk_used: 0,
+            disk_total: 0,
+            disk_read_bps: 0,
+            disk_write_bps: 0,
             ts_ms: 0,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");

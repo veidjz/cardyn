@@ -8,6 +8,10 @@ export interface MetricsSnapshot {
   memFree: number
   swapUsed: number
   swapTotal: number
+  diskUsed: number
+  diskTotal: number
+  diskReadBps: number
+  diskWriteBps: number
   tsMs: number
 }
 
