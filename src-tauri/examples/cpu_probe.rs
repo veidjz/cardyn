@@ -41,6 +41,20 @@ fn main() {
             "         gpu: utilization={:?} memUsed={:?} vramTotal={:?}",
             s.gpu.utilization, s.gpu.mem_used, s.gpu.vram_total,
         );
+        println!("         top by cpu:");
+        for p in s.top_by_cpu.iter().take(3) {
+            println!(
+                "           pid={} name={:?} cpuPct={:.1} memBytes={}",
+                p.pid, p.name, p.cpu_pct, p.mem_bytes,
+            );
+        }
+        println!("         top by mem:");
+        for p in s.top_by_mem.iter().take(3) {
+            println!(
+                "           pid={} name={:?} cpuPct={:.1} memBytes={}",
+                p.pid, p.name, p.cpu_pct, p.mem_bytes,
+            );
+        }
         if i < 3 {
             sleep(Duration::from_secs(1));
         }

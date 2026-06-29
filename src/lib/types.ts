@@ -4,6 +4,13 @@ export interface GpuSample {
   vramTotal: number | null
 }
 
+export interface ProcRow {
+  pid: number
+  name: string
+  cpuPct: number
+  memBytes: number
+}
+
 export interface MetricsSnapshot {
   cpuTotal: number
   cpuPerCore: number[]
@@ -21,6 +28,8 @@ export interface MetricsSnapshot {
   diskWriteBps: number
   netRxBps: number
   netTxBps: number
+  topByCpu: ProcRow[]
+  topByMem: ProcRow[]
   tsMs: number
 }
 

@@ -17,11 +17,14 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, Networks, System};
+use sysinfo::{
+    CpuRefreshKind, Disks, MemoryRefreshKind, Networks, ProcessRefreshKind, ProcessesToUpdate,
+    System,
+};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::gpu::GpuProvider;
-use crate::metrics::MetricsSnapshot;
+use crate::metrics::{top_by_cpu, top_by_mem, MetricsSnapshot, ProcRow};
 
 /// Samples CPU utilization and frequency from a long-lived `sysinfo::System`.
 pub struct Sampler {
@@ -33,6 +36,10 @@ pub struct Sampler {
     /// Scoped refresh kind (RAM + swap only), stored so every tick refreshes
     /// exactly the same fields.
     mem_refresh: MemoryRefreshKind,
+    /// Scoped refresh kind for processes (CPU + memory only), stored so every
+    /// tick refreshes exactly those fields. Excludes disk_usage/user/cmd/environ
+    /// to keep process enumeration cheap (risk #5, invariant 2).
+    proc_refresh: ProcessRefreshKind,
     /// Long-lived disk list, reused across ticks so cumulative I/O counters can
     /// be diffed into a throughput rate.
     disks: Disks,
@@ -72,11 +79,15 @@ impl Sampler {
         let mut system = System::new();
         let cpu_refresh = CpuRefreshKind::nothing().with_cpu_usage().with_frequency();
         let mem_refresh = MemoryRefreshKind::nothing().with_ram().with_swap();
+        let proc_refresh = ProcessRefreshKind::nothing().with_cpu().with_memory();
         // Warm-up: prime the baseline so the first tick is a real delta.
         system.refresh_cpu_specifics(cpu_refresh);
         // Warm-up: prime memory so the first tick already has values. Memory is
         // an absolute reading (not a delta), but priming keeps tick uniform.
         system.refresh_memory_specifics(mem_refresh);
+        // Warm-up: prime processes so the first tick yields meaningful per-process
+        // CPU deltas (mirrors the CPU warm-up). `true` removes dead processes.
+        system.refresh_processes_specifics(ProcessesToUpdate::All, true, proc_refresh);
         // Disk list is refreshed on construction, so the cumulative I/O counters
         // are already populated.
         let disks = Disks::new_with_refreshed_list();
@@ -96,6 +107,7 @@ impl Sampler {
             system,
             cpu_refresh,
             mem_refresh,
+            proc_refresh,
             disks,
             // Seed from the current cumulative totals so the first tick reports a
             // real rate, not a spike from a zero baseline.
@@ -124,6 +136,11 @@ impl Sampler {
         // Refresh rx/tx for the existing interfaces; `true` drops interfaces that
         // disappeared so stale entries do not skew the throughput sum.
         self.networks.refresh(true);
+        // Refresh per-process CPU + memory; `true` removes dead processes so the
+        // top-N lists never carry stale entries. Process enumeration is the
+        // expensive path (risk #5), kept scoped to CPU + memory only.
+        self.system
+            .refresh_processes_specifics(ProcessesToUpdate::All, true, self.proc_refresh);
 
         let cpu_total = self.system.global_cpu_usage();
         let cpu_per_core: Vec<f32> = self
@@ -173,6 +190,22 @@ impl Sampler {
         // rather than panicking the loop (invariant 13).
         let gpu = self.gpu.sample();
 
+        // PROCESSES: build one row per process, normalizing the summed-across-
+        // cores CPU reading to 0..=100 (ADR-013), then cut to the top 5 by CPU
+        // and by memory in the backend (invariant 3). The full list never ships.
+        let ncores = self.system.cpus().len();
+        let rows: Vec<ProcRow> = self
+            .system
+            .processes()
+            .values()
+            .map(|process| ProcRow {
+                pid: process.pid().as_u32(),
+                name: process.name().to_string_lossy().into_owned(),
+                cpu_pct: normalize_cpu(process.cpu_usage(), ncores),
+                mem_bytes: process.memory(),
+            })
+            .collect();
+
         MetricsSnapshot {
             cpu_total,
             cpu_per_core,
@@ -190,6 +223,8 @@ impl Sampler {
             disk_write_bps,
             net_rx_bps,
             net_tx_bps,
+            top_by_cpu: top_by_cpu(&rows, 5),
+            top_by_mem: top_by_mem(&rows, 5),
             ts_ms: snapshot_ts_ms,
         }
     }
@@ -333,6 +368,15 @@ fn sum_physical_net(ifaces: &[(String, u64, u64)]) -> (u64, u64) {
     })
 }
 
+/// Normalize a sysinfo process CPU reading (0..100*ncores, summed across cores)
+/// to 0..100 by dividing by the core count, clamped. Returns 0 if ncores == 0.
+fn normalize_cpu(raw: f32, ncores: usize) -> f32 {
+    if ncores == 0 {
+        return 0.0;
+    }
+    (raw / ncores as f32).clamp(0.0, 100.0)
+}
+
 /// Bytes/second between two cumulative byte counters over `dt_secs`.
 /// Returns 0 on counter reset/wrap (now < prev) or non-positive dt.
 fn bytes_per_sec(prev: u64, now: u64, dt_secs: f64) -> u64 {
@@ -376,6 +420,26 @@ mod tests {
     #[test]
     fn max_freq_mixed_with_zero() {
         assert_eq!(max_freq_mhz(&[0, 3000]), Some(3000));
+    }
+
+    #[test]
+    fn normalize_cpu_full_load_is_100() {
+        assert_eq!(normalize_cpu(400.0, 4), 100.0);
+    }
+
+    #[test]
+    fn normalize_cpu_partial_load() {
+        assert_eq!(normalize_cpu(50.0, 10), 5.0);
+    }
+
+    #[test]
+    fn normalize_cpu_over_100_clamps() {
+        assert_eq!(normalize_cpu(1000.0, 4), 100.0);
+    }
+
+    #[test]
+    fn normalize_cpu_zero_cores_is_zero() {
+        assert_eq!(normalize_cpu(50.0, 0), 0.0);
     }
 
     #[test]
