@@ -54,7 +54,23 @@ fn get_history(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // The single-instance plugin must be registered before any other plugin so
+    // a second launch focuses the running window instead of spawning a new app.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // The window may be hidden behind a future close-to-tray; show it
+            // before focusing, and tolerate a missing window without panicking.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
         .setup(|app| {
             app.manage(AppState::default());
             sampler::spawn(app.handle().clone());
