@@ -135,6 +135,40 @@ pub enum HistoryMetric {
     NetTx,
 }
 
+impl HistoryMetric {
+    /// Every history series, in a fixed order. Used to iterate over all buffers
+    /// when the sampler pushes a snapshot into the live history.
+    pub const ALL: [HistoryMetric; 8] = [
+        HistoryMetric::Cpu,
+        HistoryMetric::Mem,
+        HistoryMetric::GpuUtil,
+        HistoryMetric::GpuMem,
+        HistoryMetric::DiskRead,
+        HistoryMetric::DiskWrite,
+        HistoryMetric::NetRx,
+        HistoryMetric::NetTx,
+    ];
+}
+
+/// Raw series value for `metric` in `snap`, in the series' contract unit
+/// (percent for `Cpu`/`GpuUtil`; BYTES for `Mem`/`GpuMem`; bytes/s for the disk
+/// and net rates). `None` only when the underlying datum is absent: the GPU
+/// reads are optional ("GPU N/A"), so they yield `None` when the GPU field is
+/// `None` and no point is buffered that tick. Pure.
+pub fn series_value(metric: HistoryMetric, snap: &MetricsSnapshot) -> Option<f64> {
+    match metric {
+        HistoryMetric::Cpu => Some(snap.cpu_total as f64),
+        // `mem` stores used memory in BYTES (owner-confirmed), not a percent.
+        HistoryMetric::Mem => Some(snap.mem_used as f64),
+        HistoryMetric::GpuUtil => snap.gpu.utilization.map(|x| x as f64),
+        HistoryMetric::GpuMem => snap.gpu.mem_used.map(|x| x as f64),
+        HistoryMetric::DiskRead => Some(snap.disk_read_bps as f64),
+        HistoryMetric::DiskWrite => Some(snap.disk_write_bps as f64),
+        HistoryMetric::NetRx => Some(snap.net_rx_bps as f64),
+        HistoryMetric::NetTx => Some(snap.net_tx_bps as f64),
+    }
+}
+
 /// Number of points retained in the live history window (~60 seconds at 1 Hz).
 pub const HISTORY_CAPACITY: usize = 60;
 
@@ -199,6 +233,53 @@ impl RingBuffer {
 impl Default for RingBuffer {
     fn default() -> Self {
         Self::with_default_capacity()
+    }
+}
+
+/// The live history for every series: one [`RingBuffer`] per [`HistoryMetric`],
+/// each sized to the default live window (`RingBuffer::default()` is
+/// `with_default_capacity()`). The sampler pushes one point per series per tick;
+/// `get_history` reads one series out. Pure data structure: no time, IO or
+/// threading.
+#[derive(Default)]
+pub struct Histories {
+    cpu: RingBuffer,
+    mem: RingBuffer,
+    gpu_util: RingBuffer,
+    gpu_mem: RingBuffer,
+    disk_read: RingBuffer,
+    disk_write: RingBuffer,
+    net_rx: RingBuffer,
+    net_tx: RingBuffer,
+}
+
+impl Histories {
+    /// Mutable access to the buffer backing one series, for pushing new points.
+    pub fn buffer_mut(&mut self, m: HistoryMetric) -> &mut RingBuffer {
+        match m {
+            HistoryMetric::Cpu => &mut self.cpu,
+            HistoryMetric::Mem => &mut self.mem,
+            HistoryMetric::GpuUtil => &mut self.gpu_util,
+            HistoryMetric::GpuMem => &mut self.gpu_mem,
+            HistoryMetric::DiskRead => &mut self.disk_read,
+            HistoryMetric::DiskWrite => &mut self.disk_write,
+            HistoryMetric::NetRx => &mut self.net_rx,
+            HistoryMetric::NetTx => &mut self.net_tx,
+        }
+    }
+
+    /// History snapshot for one series, oldest to newest.
+    pub fn history(&self, m: HistoryMetric) -> History {
+        match m {
+            HistoryMetric::Cpu => self.cpu.history(),
+            HistoryMetric::Mem => self.mem.history(),
+            HistoryMetric::GpuUtil => self.gpu_util.history(),
+            HistoryMetric::GpuMem => self.gpu_mem.history(),
+            HistoryMetric::DiskRead => self.disk_read.history(),
+            HistoryMetric::DiskWrite => self.disk_write.history(),
+            HistoryMetric::NetRx => self.net_rx.history(),
+            HistoryMetric::NetTx => self.net_tx.history(),
+        }
     }
 }
 
@@ -441,5 +522,100 @@ mod tests {
     #[test]
     fn top_by_mem_empty_is_empty() {
         assert!(top_by_mem(&[], 5).is_empty());
+    }
+
+    /// A snapshot with distinct, recognizable values per series so a mapping
+    /// test can tell which field `series_value` read. `gpu` is parameterized so
+    /// the "absent GPU datum" cases can pass `None`.
+    fn sample_snapshot(gpu: GpuSample) -> MetricsSnapshot {
+        MetricsSnapshot {
+            cpu_total: 12.5,
+            cpu_per_core: vec![],
+            cpu_freq_mhz: None,
+            mem_used: 8_000_000_000,
+            mem_total: 16_000_000_000,
+            mem_available: 0,
+            mem_free: 0,
+            swap_used: 0,
+            swap_total: 0,
+            gpu,
+            disk_used: 0,
+            disk_total: 0,
+            disk_read_bps: 111,
+            disk_write_bps: 222,
+            net_rx_bps: 333,
+            net_tx_bps: 444,
+            top_by_cpu: vec![],
+            top_by_mem: vec![],
+            ts_ms: 7,
+        }
+    }
+
+    #[test]
+    fn series_value_maps_each_variant_to_its_field() {
+        let snap = sample_snapshot(GpuSample {
+            utilization: Some(42.0),
+            mem_used: Some(9_000_000),
+            vram_total: None,
+        });
+        assert_eq!(series_value(HistoryMetric::Cpu, &snap), Some(12.5));
+        // `Mem` is BYTES, not a percent.
+        assert_eq!(
+            series_value(HistoryMetric::Mem, &snap),
+            Some(8_000_000_000.0)
+        );
+        assert_eq!(series_value(HistoryMetric::GpuUtil, &snap), Some(42.0));
+        assert_eq!(
+            series_value(HistoryMetric::GpuMem, &snap),
+            Some(9_000_000.0)
+        );
+        assert_eq!(series_value(HistoryMetric::DiskRead, &snap), Some(111.0));
+        assert_eq!(series_value(HistoryMetric::DiskWrite, &snap), Some(222.0));
+        assert_eq!(series_value(HistoryMetric::NetRx, &snap), Some(333.0));
+        assert_eq!(series_value(HistoryMetric::NetTx, &snap), Some(444.0));
+    }
+
+    #[test]
+    fn series_value_gpu_absent_is_none() {
+        let snap = sample_snapshot(GpuSample {
+            utilization: None,
+            mem_used: None,
+            vram_total: None,
+        });
+        assert_eq!(series_value(HistoryMetric::GpuUtil, &snap), None);
+        assert_eq!(series_value(HistoryMetric::GpuMem, &snap), None);
+        // Non-GPU series are always present even when the GPU is N/A.
+        assert_eq!(series_value(HistoryMetric::Cpu, &snap), Some(12.5));
+    }
+
+    #[test]
+    fn history_metric_all_has_eight_distinct_entries() {
+        assert_eq!(HistoryMetric::ALL.len(), 8);
+        for (i, a) in HistoryMetric::ALL.iter().enumerate() {
+            for b in &HistoryMetric::ALL[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn histories_routes_each_metric_to_its_own_buffer() {
+        let mut h = Histories::default();
+        h.buffer_mut(HistoryMetric::Mem).push(1, 100.0);
+        h.buffer_mut(HistoryMetric::Mem).push(2, 200.0);
+        h.buffer_mut(HistoryMetric::NetRx).push(3, 9.0);
+
+        let mem = h.history(HistoryMetric::Mem);
+        assert_eq!(mem.t, vec![1, 2]);
+        assert_eq!(mem.v, vec![100.0, 200.0]);
+
+        let net = h.history(HistoryMetric::NetRx);
+        assert_eq!(net.t, vec![3]);
+        assert_eq!(net.v, vec![9.0]);
+
+        // An untouched series stays empty.
+        let cpu = h.history(HistoryMetric::Cpu);
+        assert!(cpu.t.is_empty());
+        assert!(cpu.v.is_empty());
     }
 }

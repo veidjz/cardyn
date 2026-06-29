@@ -24,7 +24,9 @@ use sysinfo::{
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::gpu::GpuProvider;
-use crate::metrics::{top_by_cpu, top_by_mem, MetricsSnapshot, ProcRow};
+use crate::metrics::{
+    series_value, top_by_cpu, top_by_mem, HistoryMetric, MetricsSnapshot, ProcRow,
+};
 
 /// Samples CPU utilization and frequency from a long-lived `sysinfo::System`.
 pub struct Sampler {
@@ -239,8 +241,8 @@ impl Default for Sampler {
 /// Spawn the background sampler thread that drives the live metrics feed.
 ///
 /// The thread owns a [`Sampler`], samples at ~1 Hz, stores the latest snapshot
-/// and pushes CPU total into the shared ring buffer (both behind the managed
-/// [`AppState`](crate::AppState) mutexes), then emits a `metrics` event each
+/// and pushes every history series into the shared ring buffers (both behind the
+/// managed [`AppState`](crate::AppState) mutexes), then emits a `metrics` event each
 /// tick. Nothing here may panic: mutex poisoning and emit errors are tolerated
 /// so a transient failure never tears down the loop.
 pub fn spawn(app: AppHandle) {
@@ -254,8 +256,14 @@ pub fn spawn(app: AppHandle) {
             // `State` is fetched per lock rather than bound to a shared local:
             // the `if let` scrutinee temporary borrows it, and inlining keeps the
             // guard and its `State` dropping together (edition 2021 drop order).
-            if let Ok(mut history) = app.state::<crate::AppState>().cpu_history.lock() {
-                history.push(snapshot.ts_ms, snapshot.cpu_total as f64);
+            // Lock once, then push every series whose datum is present this tick
+            // (absent GPU reads buffer no point).
+            if let Ok(mut histories) = app.state::<crate::AppState>().histories.lock() {
+                for m in HistoryMetric::ALL {
+                    if let Some(v) = series_value(m, &snapshot) {
+                        histories.buffer_mut(m).push(snapshot.ts_ms, v);
+                    }
+                }
             }
             if let Ok(mut last) = app.state::<crate::AppState>().last.lock() {
                 *last = Some(snapshot.clone());
