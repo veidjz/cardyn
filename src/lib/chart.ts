@@ -6,6 +6,13 @@ export function ringFraction(value: number | null, max: number): number {
   return frac
 }
 
+/// Max for an auto-scaling sparkline (throughput): the window max, but never
+/// below `floor` (avoids a flat/zero-division axis when idle). Empty -> floor.
+export function sparklineMax(values: number[], floor: number): number {
+  if (values.length === 0) return floor
+  return Math.max(floor, ...values)
+}
+
 export function sparklinePoints(
   values: number[],
   width: number,
