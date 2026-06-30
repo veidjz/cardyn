@@ -195,7 +195,9 @@
     height: 100vh;
     box-sizing: border-box;
     padding: 18px;
-    display: grid;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .grid {
@@ -203,7 +205,10 @@
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     grid-auto-rows: 1fr;
     gap: 16px;
+    width: 100%;
+    max-width: 760px;
     height: 100%;
+    max-height: 500px;
   }
 
   .card {
