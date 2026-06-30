@@ -6,6 +6,7 @@ import {
   chartSeries,
   alignSeries,
   isPercentMetric,
+  tipPlacement,
 } from '../chart'
 
 describe('chartSeries', () => {
@@ -109,6 +110,43 @@ describe('sparklineMax', () => {
 
   it('ignores negatives and stays at floor', () => {
     expect(sparklineMax([-10, -3], 1)).toBe(1)
+  })
+})
+
+describe('tipPlacement', () => {
+  it('centers on the marker and anchors to the top when there is room', () => {
+    expect(tipPlacement(100, 80, 80, 0, 200, 30, 56)).toEqual({
+      boxX: 100,
+      caretX: 100,
+      anchorY: 80,
+      flip: false,
+    })
+  })
+
+  it('clamps the box left while the caret keeps tracking the marker', () => {
+    const p = tipPlacement(10, 60, 60, 0, 200, 30, 56)
+    expect(p.boxX).toBe(30)
+    expect(p.caretX).toBe(10)
+  })
+
+  it('clamps the box right while the caret keeps tracking the marker', () => {
+    const p = tipPlacement(190, 60, 60, 0, 200, 30, 56)
+    expect(p.boxX).toBe(170)
+    expect(p.caretX).toBe(190)
+  })
+
+  it('flips below and anchors to the lowest marker near the ceiling', () => {
+    expect(tipPlacement(100, 20, 90, 0, 200, 30, 56)).toEqual({
+      boxX: 100,
+      caretX: 100,
+      anchorY: 90,
+      flip: true,
+    })
+  })
+
+  it('falls back to the marker x when the plot is too narrow to clamp', () => {
+    const p = tipPlacement(40, 60, 60, 30, 70, 30, 56)
+    expect(p.boxX).toBe(40)
   })
 })
 

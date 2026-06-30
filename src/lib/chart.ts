@@ -41,6 +41,41 @@ export function alignSeries(columns: number[][]): number[][] {
   return columns.map((c) => c.slice(c.length - len))
 }
 
+export interface TipPlacement {
+  // Box center x (CSS px, relative to the chart container) after horizontal
+  // clamping; the caret keeps tracking the true marker x.
+  boxX: number
+  caretX: number
+  // Anchor y the box hangs from: the topmost marker normally, the lowest when
+  // flipped below.
+  anchorY: number
+  // True when the box is placed BELOW the markers (caret points up) because it
+  // would otherwise clip past the container top.
+  flip: boolean
+}
+
+// Pure geometry for the at-point inspect tooltip. All inputs are CSS px relative
+// to the chart container. `cx` is the marker x; `topY`/`bottomY` are the highest
+// and lowest markers' y. The box centers on `cx` but is clamped horizontally so
+// it stays within [plotLeft, plotRight] by its estimated `halfWidth` (caret
+// still tracks `cx`). When the topmost marker sits within `upReach` of the
+// container top the box would clip above, so it flips to hang below `bottomY`.
+export function tipPlacement(
+  cx: number,
+  topY: number,
+  bottomY: number,
+  plotLeft: number,
+  plotRight: number,
+  halfWidth: number,
+  upReach: number,
+): TipPlacement {
+  const flip = topY < upReach
+  const lo = plotLeft + halfWidth
+  const hi = plotRight - halfWidth
+  const boxX = hi < lo ? cx : Math.min(Math.max(cx, lo), hi)
+  return { boxX, caretX: cx, anchorY: flip ? bottomY : topY, flip }
+}
+
 export function ringFraction(value: number | null, max: number): number {
   if (value === null) return 0
   const frac = value / max
