@@ -205,6 +205,14 @@
           // ~4-6 non-overlapping labels instead of one every 5s.
           space: 95,
           incrs: [15, 30, 60],
+          // As the window scrolls, the leftmost HH:MM:SS label (centered on its
+          // tick) would poke past the plot's left edge into the y-axis gutter
+          // just before it scrolls off. valToPos(s, 'x') is CSS px from the
+          // plot's left edge (0); a label is ~70-80px wide, so hide any tick
+          // within ~half a label of that edge - it vanishes just before it would
+          // overlap the y-axis. The right side is unaffected.
+          filter: (u: uPlot, splits: number[]) =>
+            splits.map((s) => (u.valToPos(s, 'x') < 40 ? null : s)),
           values: (_u: uPlot, splits: number[]) =>
             splits.map((v) => formatClock(v)),
         },
