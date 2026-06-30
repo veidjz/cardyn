@@ -218,13 +218,12 @@
   {#if metric === 'cpu' || metric === 'mem'}
     {@const procs =
       metric === 'cpu' ? (snap?.topByCpu ?? []) : (snap?.topByMem ?? [])}
-    <div class="procs">
+    <div class="procs" style="--accent: var(--{metric})">
       <h2 class="proc-title">Top Processes</h2>
       {#if procs.length > 0}
         <table class="proc-table">
           <thead>
             <tr>
-              <th class="num pid">PID</th>
               <th class="name">Name</th>
               <th class="num cpu">CPU%</th>
               <th class="num mem">Memory</th>
@@ -233,10 +232,13 @@
           <tbody>
             {#each procs as p (p.pid)}
               <tr>
-                <td class="num pid">{p.pid}</td>
                 <td class="name">{p.name}</td>
-                <td class="num cpu">{formatPercent(p.cpuPct)}</td>
-                <td class="num mem">{formatBytes(p.memBytes)}</td>
+                <td class="num cpu" class:primary={metric === 'cpu'}
+                  >{formatPercent(p.cpuPct)}</td
+                >
+                <td class="num mem" class:primary={metric === 'mem'}
+                  >{formatBytes(p.memBytes)}</td
+                >
               </tr>
             {/each}
           </tbody>
@@ -473,16 +475,16 @@
   }
 
   .proc-table th {
-    padding: 4px 0;
-    font-size: 0.75rem;
+    padding: 0 0 6px;
+    font-size: 0.72rem;
     font-weight: 500;
     color: var(--muted);
     text-align: right;
-    border-bottom: 1px solid var(--hair);
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   }
 
   .proc-table td {
-    padding: 5px 0;
+    padding: 7px 0;
     font-size: 0.85rem;
     color: var(--text);
   }
@@ -492,8 +494,13 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .proc-table .pid {
-    width: 52px;
+  .proc-table td.num {
+    color: var(--muted);
+  }
+
+  .proc-table td.num.primary {
+    color: var(--text);
+    font-weight: 500;
   }
 
   .proc-table .cpu {
