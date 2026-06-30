@@ -28,6 +28,11 @@ use crate::metrics::{
     series_value, top_by_cpu, top_by_mem, HistoryMetric, MetricsSnapshot, ProcRow,
 };
 
+/// Re-enumerate processes every Nth tick instead of every tick. Process
+/// enumeration is the expensive sample (risk #5); the top-N lists are cached
+/// between refreshes. Gauges (CPU/mem/disk/net/GPU) still refresh every tick.
+const PROCESS_REFRESH_INTERVAL: u64 = 3;
+
 /// Samples CPU utilization and frequency from a long-lived `sysinfo::System`.
 pub struct Sampler {
     /// Reused across ticks so CPU usage is computed as a delta between samples.
@@ -66,6 +71,12 @@ pub struct Sampler {
     /// always a safe fallback. Constructed inside the sampler thread, so no
     /// `Send` bound is needed.
     gpu: Box<dyn GpuProvider>,
+    /// Ticks elapsed, drives the process-refresh cadence.
+    tick_count: u64,
+    /// Cached top-5 by CPU, reused on ticks that skip process enumeration.
+    last_top_by_cpu: Vec<ProcRow>,
+    /// Cached top-5 by memory, likewise.
+    last_top_by_mem: Vec<ProcRow>,
 }
 
 impl Sampler {
@@ -122,6 +133,9 @@ impl Sampler {
             prev_net_tx,
             prev_ts_ms: now_ms(),
             gpu,
+            tick_count: 0,
+            last_top_by_cpu: Vec::new(),
+            last_top_by_mem: Vec::new(),
         }
     }
 
@@ -138,11 +152,6 @@ impl Sampler {
         // Refresh rx/tx for the existing interfaces; `true` drops interfaces that
         // disappeared so stale entries do not skew the throughput sum.
         self.networks.refresh(true);
-        // Refresh per-process CPU + memory; `true` removes dead processes so the
-        // top-N lists never carry stale entries. Process enumeration is the
-        // expensive path (risk #5), kept scoped to CPU + memory only.
-        self.system
-            .refresh_processes_specifics(ProcessesToUpdate::All, true, self.proc_refresh);
 
         let cpu_total = self.system.global_cpu_usage();
         let cpu_per_core: Vec<f32> = self
@@ -192,21 +201,36 @@ impl Sampler {
         // rather than panicking the loop (invariant 13).
         let gpu = self.gpu.sample();
 
-        // PROCESSES: build one row per process, normalizing the summed-across-
-        // cores CPU reading to 0..=100 (ADR-013), then cut to the top 5 by CPU
-        // and by memory in the backend (invariant 3). The full list never ships.
-        let ncores = self.system.cpus().len();
-        let rows: Vec<ProcRow> = self
-            .system
-            .processes()
-            .values()
-            .map(|process| ProcRow {
-                pid: process.pid().as_u32(),
-                name: process.name().to_string_lossy().into_owned(),
-                cpu_pct: normalize_cpu(process.cpu_usage(), ncores),
-                mem_bytes: process.memory(),
-            })
-            .collect();
+        // PROCESSES: re-enumerate only every PROCESS_REFRESH_INTERVAL ticks -
+        // process enumeration is the expensive path (risk #5), so the top-N lists
+        // are cached and reused on the skipped ticks while the gauges above still
+        // refresh every tick. When it runs: refresh per-process CPU + memory
+        // (`true` removes dead processes so the top-N lists never carry stale
+        // entries), build one row per process normalizing the summed-across-cores
+        // CPU reading to 0..=100 (ADR-013), then cache the top 5 by CPU and by
+        // memory in the backend (invariant 3). The full list never ships.
+        if should_refresh_processes(self.tick_count, PROCESS_REFRESH_INTERVAL) {
+            self.system.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                self.proc_refresh,
+            );
+            let ncores = self.system.cpus().len();
+            let rows: Vec<ProcRow> = self
+                .system
+                .processes()
+                .values()
+                .map(|process| ProcRow {
+                    pid: process.pid().as_u32(),
+                    name: process.name().to_string_lossy().into_owned(),
+                    cpu_pct: normalize_cpu(process.cpu_usage(), ncores),
+                    mem_bytes: process.memory(),
+                })
+                .collect();
+            self.last_top_by_cpu = top_by_cpu(&rows, 5);
+            self.last_top_by_mem = top_by_mem(&rows, 5);
+        }
+        self.tick_count = self.tick_count.wrapping_add(1);
 
         MetricsSnapshot {
             cpu_total,
@@ -225,8 +249,8 @@ impl Sampler {
             disk_write_bps,
             net_rx_bps,
             net_tx_bps,
-            top_by_cpu: top_by_cpu(&rows, 5),
-            top_by_mem: top_by_mem(&rows, 5),
+            top_by_cpu: self.last_top_by_cpu.clone(),
+            top_by_mem: self.last_top_by_mem.clone(),
             ts_ms: snapshot_ts_ms,
         }
     }
@@ -413,6 +437,12 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Whether this tick should re-enumerate processes. `interval == 0` means
+/// "every tick"; otherwise re-enumerate when `tick_count` is a multiple of it.
+fn should_refresh_processes(tick_count: u64, interval: u64) -> bool {
+    interval == 0 || tick_count.is_multiple_of(interval)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,5 +609,30 @@ mod tests {
     #[test]
     fn sum_physical_net_single_physical_is_itself() {
         assert_eq!(sum_physical_net(&named(&[("en0", 42, 7)])), (42, 7));
+    }
+
+    #[test]
+    fn should_refresh_processes_first_tick_refreshes() {
+        // Tick 0 is a multiple of any interval, so the caches start populated.
+        assert!(should_refresh_processes(0, 3));
+    }
+
+    #[test]
+    fn should_refresh_processes_skips_between_intervals() {
+        assert!(!should_refresh_processes(1, 3));
+        assert!(!should_refresh_processes(2, 3));
+    }
+
+    #[test]
+    fn should_refresh_processes_refreshes_on_multiple() {
+        assert!(should_refresh_processes(3, 3));
+        assert!(should_refresh_processes(6, 3));
+    }
+
+    #[test]
+    fn should_refresh_processes_interval_zero_is_every_tick() {
+        assert!(should_refresh_processes(0, 0));
+        assert!(should_refresh_processes(1, 0));
+        assert!(should_refresh_processes(7, 0));
     }
 }
