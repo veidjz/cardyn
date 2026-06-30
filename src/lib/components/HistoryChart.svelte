@@ -24,7 +24,7 @@
   const series = $derived(chartSeries(metric))
   const meta = $derived(metricMeta[metric])
 
-  // Y-axis / legend value formatter, by the unit of this metric's series.
+  // Y-axis tick + readout value formatter, by the unit of this metric's series.
   const valueFmt = $derived(
     metric === 'cpu' || metric === 'gpu'
       ? formatPercent
@@ -73,6 +73,12 @@
   // appended, so the view (and this index) stay fixed on the selected moment.
   let pinnedIdx = $state<number | null>(null)
 
+  // Cursor sample index under the pointer (null when the pointer leaves the
+  // plot), driving the hover/idle readout. `rev` bumps on each live append so
+  // the hover-derived recomputes as the (non-reactive) `data` window scrolls.
+  let hoveredIdx = $state<number | null>(null)
+  let rev = $state(0)
+
   // Screen geometry of the at-point tooltip while pinned, in CSS px relative to
   // `.chart`. Computed in the click handler and the ResizeObserver (never in a
   // draw hook). Estimated tooltip half-width for edge clamping; upward reach
@@ -93,6 +99,45 @@
       rows: series.map((s, i) => ({
         label: s.label,
         value: valueFmt(data[i + 1][idx]),
+      })),
+    }
+  })
+
+  // Quiet, always-meaningful readout strip under the chart. Precedence:
+  // pinned -> hover -> idle. PINNED defers value+time to the focus card (it
+  // prints labels only, never twice); HOVER tracks the cursor sample (accent
+  // value + that point's clock); IDLE shows the muted live value + "now".
+  type ReadoutRow = { label: string; value?: string }
+  type Readout =
+    | { mode: 'pinned'; rows: ReadoutRow[] }
+    | { mode: 'hover'; time: string; rows: ReadoutRow[] }
+    | { mode: 'idle'; rows: ReadoutRow[] }
+
+  const readout = $derived.by((): Readout => {
+    // Touch `rev` so the hover value stays fresh as the live window scrolls
+    // (`data` is a plain array, not reactive). Idle reads metrics.latest below.
+    void rev
+    if (pinnedIdx !== null) {
+      return { mode: 'pinned', rows: series.map((s) => ({ label: s.label })) }
+    }
+    if (hoveredIdx !== null && data[0] && hoveredIdx < data[0].length) {
+      const idx = hoveredIdx
+      return {
+        mode: 'hover',
+        time: formatClock(data[0][idx]),
+        rows: series.map((s, i) => ({
+          label: s.label,
+          value: valueFmt(data[i + 1][idx]),
+        })),
+      }
+    }
+    const snap = metrics.latest
+    const liveVals = snap ? liveValues(snap) : series.map(() => null)
+    return {
+      mode: 'idle',
+      rows: series.map((s, i) => ({
+        label: s.label,
+        value: valueFmt(liveVals[i]),
       })),
     }
   })
@@ -161,21 +206,18 @@
     const opts: uPlot.Options = {
       width: el.clientWidth,
       height: HEIGHT,
+      legend: { show: false },
       scales: {
         x: { time: true },
         y: isPercentMetric(metric) ? { range: [0, 100] } : {},
       },
       series: [
-        {
-          value: (_u: uPlot, raw: number | null) =>
-            raw == null ? '--' : formatClock(raw),
-        },
+        {},
         ...series.map((s, i) => ({
           label: s.label,
           stroke: accent,
           width: 1.5,
           dash: i > 0 ? [4, 4] : undefined,
-          value: (_u: uPlot, raw: number | null) => valueFmt(raw),
         })),
       ],
       axes: [
@@ -195,6 +237,13 @@
         },
       ],
       hooks: {
+        // Event-driven hover (no rAF): fires on every cursor move and sets
+        // idx=null on leave, which is the idle trigger for the readout strip.
+        setCursor: [
+          (chart: uPlot) => {
+            hoveredIdx = chart.cursor.idx ?? null
+          },
+        ],
         // Pinpoint-inspect highlight: a lit accent column + a solid accent
         // guide + a per-series bullseye at the pinned x. valToPos(_, true)
         // returns DEVICE px (the ctx is unscaled), so cx/cy are already device
@@ -332,6 +381,7 @@
       }
       appendRow(row)
       u.setData(data as uPlot.AlignedData)
+      rev++
     })
   })
 
@@ -370,6 +420,27 @@
       style="left: {tip.caretX}px; top: {tip.anchorY}px;"
     ></div>
   {/if}
+</div>
+
+<div
+  class="readout"
+  class:hover={readout.mode === 'hover'}
+  style="--accent: var(--{metric})"
+>
+  <div class="r-series">
+    {#each readout.rows as row, i (row.label)}
+      <span class="r-item">
+        <span class="swatch" class:dashed={i > 0}></span>
+        <span class="r-label">{row.label}</span>
+        {#if readout.mode !== 'pinned'}
+          <span class="r-value">{row.value}</span>
+        {/if}
+      </span>
+    {/each}
+  </div>
+  <span class="r-time">
+    {#if readout.mode === 'idle'}now{:else if readout.mode === 'hover'}{readout.time}{/if}
+  </span>
 </div>
 
 {#if detail}
@@ -424,13 +495,6 @@
     width: 100%;
     position: relative;
     overflow: visible;
-  }
-
-  /* Show every series always: kill uPlot's click-to-hide legend toggle while
-     keeping the legend labels + live hover values (written programmatically on
-     plot-area cursor, not via pointer events on the legend). */
-  .chart :global(.u-legend) {
-    pointer-events: none;
   }
 
   /* At-point tooltip --------------------------------------------------- */
@@ -649,5 +713,57 @@
     font-weight: 600;
     color: var(--accent);
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Quiet 3-state readout strip --------------------------------------- */
+  .readout {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 6px;
+    padding: 0 2px;
+    min-height: 1.15rem;
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+
+  .r-series {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .r-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .r-label {
+    color: var(--muted);
+  }
+
+  .r-value {
+    color: var(--muted);
+    font-weight: 500;
+    transition: color 120ms ease-out;
+  }
+
+  .readout.hover .r-value {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .r-time {
+    min-width: 4.5rem;
+    text-align: right;
+    font-size: 0.66rem;
+    color: var(--muted);
+  }
+
+  .readout.hover .r-time {
+    color: var(--text);
   }
 </style>
