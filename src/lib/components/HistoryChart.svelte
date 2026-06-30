@@ -1,14 +1,9 @@
 <script lang="ts">
-  import { onMount, onDestroy, untrack, tick } from 'svelte'
+  import { onMount, onDestroy, untrack } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { metrics } from '$lib/metrics.svelte'
-  import {
-    chartSeries,
-    alignSeries,
-    isPercentMetric,
-    tipPlacement,
-    type TipPlacement,
-  } from '$lib/chart'
+  import { metricMeta } from '$lib/metric-meta'
+  import { chartSeries, alignSeries, isPercentMetric } from '$lib/chart'
   import {
     formatPercent,
     formatBytes,
@@ -21,6 +16,7 @@
   let { metric }: { metric: MetricKey } = $props()
 
   const series = $derived(chartSeries(metric))
+  const meta = $derived(metricMeta[metric])
 
   // Y-axis tick + tooltip value formatter, by the unit of this metric's series.
   const valueFmt = $derived(
@@ -71,20 +67,9 @@
   // appended, so the view (and this index) stay fixed on the selected moment.
   let pinnedIdx = $state<number | null>(null)
 
-  // The floating tooltip: its placement (computed in the click handler and the
-  // ResizeObserver, never in a draw hook) and its measured element. `tipW`/`tipH`
-  // start as a sound estimate and are corrected from the real box on the next
-  // tick so the helper can place + clamp it precisely.
-  let tip = $state<TipPlacement | null>(null)
-  let tipEl = $state<HTMLDivElement | undefined>(undefined)
-  let tipW = 120
-  let tipH = 50
-  // Assigned in init() so it closes over the live uPlot instance + pxRatio.
-  let recomputeTip: (() => void) | null = null
-
   // Detail of the inspected point: time + one row per series (label + value).
   // Recomputed when the pinned index changes; `data` is frozen while inspecting.
-  // Feeds the floating tooltip.
+  // Feeds the centered focus card.
   const detail = $derived.by(() => {
     const idx = pinnedIdx
     if (idx === null || !data[0] || idx >= data[0].length) return null
@@ -110,16 +95,13 @@
     u.setData(data as uPlot.AlignedData)
   }
 
-  function onChartClick(e: MouseEvent): void {
+  function onChartClick(): void {
     if (!u) return
-    // Clicks within the tooltip (incl. the close control) never re-pin.
-    if (tipEl?.contains(e.target as Node)) return
     const idx = u.cursor.idx
     if (idx == null) return
     // Click a point to inspect/freeze; clicking another moves the lock.
     const wasPinned = pinnedIdx !== null
     pinnedIdx = idx
-    recomputeTip?.()
     if (!wasPinned) {
       window.addEventListener('keydown', onKeydown)
       document.addEventListener('click', onOutside)
@@ -132,21 +114,14 @@
   }
 
   // Close on a click anywhere outside the chart container. Clicks on the plot
-  // re-pin via onChartClick; clicks on the tooltip are guarded there.
+  // re-pin via onChartClick (the focus card sits outside, so a click there closes).
   function onOutside(e: MouseEvent): void {
     if (!el.contains(e.target as Node)) closeInspect()
   }
 
-  function onCloseClick(e: MouseEvent): void {
-    // Don't bubble to onChartClick (re-pin) or onOutside (close).
-    e.stopPropagation()
-    closeInspect()
-  }
-
-  // Exit inspect mode: drop the highlight/tooltip and resume live appends.
+  // Exit inspect mode: drop the highlight/card and resume live appends.
   function closeInspect(): void {
     pinnedIdx = null
-    tip = null
     window.removeEventListener('keydown', onKeydown)
     document.removeEventListener('click', onOutside)
     flushBuffer()
@@ -245,43 +220,8 @@
     u = new UPlot(opts, data as uPlot.AlignedData, el)
     el.addEventListener('click', onChartClick)
 
-    // Anchor the tooltip at the pinned sample, in CSS px relative to `.chart`.
-    // valToPos(_, false) is CSS px relative to the plot area; add the plot-area
-    // offset (bbox is device px -> /pr) to reach `.chart` coords. Place with the
-    // current size estimate, then correct from the measured box on the next tick.
-    recomputeTip = async () => {
-      const chart = u
-      if (!chart || pinnedIdx === null) return
-      const idx = pinnedIdx
-      const pr = UPlot.pxRatio
-      const offX = chart.bbox.left / pr
-      const offY = chart.bbox.top / pr
-      const cx = chart.valToPos(data[0][idx], 'x', false) + offX
-      // Anchor at the topmost marker so an "above" tooltip clears all series.
-      let cy = Infinity
-      for (let s = 1; s < data.length; s++) {
-        const y = data[s][idx]
-        if (y == null) continue
-        const py = chart.valToPos(y, 'y', false) + offY
-        if (py < cy) cy = py
-      }
-      if (cy === Infinity) {
-        tip = null
-        return
-      }
-      const bounds = { left: 0, top: 0, right: el.clientWidth, bottom: HEIGHT }
-      tip = tipPlacement(cx, cy, tipW, tipH, bounds)
-      await tick()
-      if (pinnedIdx !== idx || !tipEl) return
-      const r = tipEl.getBoundingClientRect()
-      tipW = r.width
-      tipH = r.height
-      tip = tipPlacement(cx, cy, tipW, tipH, bounds)
-    }
-
     ro = new ResizeObserver(() => {
       u?.setSize({ width: el.clientWidth, height: HEIGHT })
-      recomputeTip?.()
     })
     ro.observe(el)
   }
@@ -317,38 +257,45 @@
   })
 </script>
 
-<div class="chart" bind:this={el} style="--accent: var(--{metric})">
-  {#if detail && tip}
-    <div
-      bind:this={tipEl}
-      class="tip {tip.side}"
-      style="left: {tip.left}px; top: {tip.top}px;"
-    >
-      <button
-        class="tip-close"
-        type="button"
-        aria-label="Close"
-        onclick={onCloseClick}>✕</button
-      >
+<div class="chart" bind:this={el}></div>
+
+{#if detail}
+  <div class="focus" style="--accent: var(--{metric})">
+    <div class="focus-card">
+      <div class="focus-head">
+        <span class="focus-id">
+          <span class="focus-dot"></span>
+          <span class="focus-name">{meta.label}</span>
+        </span>
+        <button
+          class="close"
+          type="button"
+          aria-label="Close"
+          onclick={closeInspect}>✕</button
+        >
+      </div>
       {#if detail.rows.length === 1}
-        <span class="tip-value">{detail.rows[0].value}</span>
-        <span class="tip-time">{detail.time}</span>
+        <div class="focus-body single">
+          <span class="hero">{detail.rows[0].value}</span>
+          <span class="caption">{detail.time}</span>
+        </div>
       {:else}
-        <span class="tip-time tip-head">{detail.time}</span>
-        {#each detail.rows as row, i (row.label)}
-          <span class="tip-row">
-            <span class="glyph" class:hollow={i > 0}></span>
-            <span class="tip-rowval">{row.value}</span>
-          </span>
-        {/each}
+        <div class="focus-body multi">
+          <div class="cols">
+            {#each detail.rows as row, i (row.label)}
+              <div class="col">
+                <span class="swatch" class:dashed={i > 0}></span>
+                <span class="col-label">{row.label}</span>
+                <span class="col-value">{row.value}</span>
+              </div>
+            {/each}
+          </div>
+          <span class="caption">{detail.time}</span>
+        </div>
       {/if}
     </div>
-    <div
-      class="caret {tip.side}"
-      style="left: {tip.caretLeft}px; top: {tip.caretTop}px;"
-    ></div>
-  {/if}
-</div>
+  </div>
+{/if}
 
 <style>
   @keyframes inspect-in {
@@ -366,123 +313,138 @@
     overflow: visible;
   }
 
-  /* At-point tooltip --------------------------------------------------- */
-  .tip {
-    position: absolute;
-    z-index: 2;
-    pointer-events: auto;
+  /* Centered focus card ----------------------------------------------- */
+  .focus {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1px;
-    padding: 6px 8px;
+    justify-content: center;
+    margin-top: 8px;
+  }
+
+  .focus-card {
+    position: relative;
+    min-width: 180px;
+    max-width: 300px;
+    padding: 12px 16px 11px;
     background: var(--panel);
     border: 1px solid var(--hair);
-    border-radius: 6px;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
-    font-size: 0.72rem;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
+    border-top: 2px solid var(--accent);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     animation: inspect-in 120ms ease-out;
   }
 
-  .tip-close {
-    align-self: flex-end;
+  .focus-card::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 8px solid transparent;
+    border-right: 8px solid transparent;
+    border-bottom: 8px solid var(--accent);
+  }
+
+  .focus-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .focus-id {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .focus-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .focus-name {
+    color: var(--text);
+    font-size: 0.75rem;
+    letter-spacing: 0.02em;
+  }
+
+  .close {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 16px;
-    height: 16px;
-    margin: -2px -4px 0 10px;
-    padding: 0;
+    width: 28px;
+    height: 28px;
+    margin: -6px -8px -6px 0;
     appearance: none;
     background: transparent;
     border: none;
     color: var(--muted);
     font: inherit;
-    font-size: 0.7rem;
     line-height: 1;
     cursor: pointer;
   }
 
-  .tip-close:hover {
+  .close:hover {
     color: var(--text);
   }
 
-  .tip-value {
-    font-size: 0.8rem;
+  .focus-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .hero {
+    font-size: 1.5rem;
+    font-weight: 650;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .caption {
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .cols {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin-bottom: 6px;
+  }
+
+  .col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .swatch {
+    width: 10px;
+    height: 0;
+    border-top: 2px solid var(--accent);
+  }
+
+  .swatch.dashed {
+    border-top-style: dashed;
+  }
+
+  .col-label {
+    color: var(--muted);
+    font-size: 0.7rem;
+  }
+
+  .col-value {
+    font-size: 1.05rem;
     font-weight: 600;
     color: var(--accent);
-  }
-
-  .tip-time {
-    font-size: 0.66rem;
-    color: var(--muted);
-  }
-
-  .tip-head {
-    margin-bottom: 3px;
-  }
-
-  .tip-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    align-self: stretch;
-  }
-
-  .glyph {
-    width: 6px;
-    height: 6px;
-    flex: none;
-    background: var(--accent);
-  }
-
-  .glyph.hollow {
-    background: transparent;
-    border: 1px solid var(--accent);
-  }
-
-  .tip-rowval {
-    font-size: 0.72rem;
-    color: var(--text);
-  }
-
-  /* Caret: a small triangle on the box edge pointing back at the marker. ---- */
-  .caret {
-    position: absolute;
-    z-index: 2;
-    pointer-events: none;
-    width: 0;
-    height: 0;
-    animation: inspect-in 120ms ease-out;
-  }
-
-  .caret.above {
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-top: 6px solid var(--panel);
-    transform: translate(-50%, 0);
-  }
-
-  .caret.below {
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-bottom: 6px solid var(--panel);
-    transform: translate(-50%, -100%);
-  }
-
-  .caret.right {
-    border-top: 6px solid transparent;
-    border-bottom: 6px solid transparent;
-    border-right: 6px solid var(--panel);
-    transform: translate(-100%, -50%);
-  }
-
-  .caret.left {
-    border-top: 6px solid transparent;
-    border-bottom: 6px solid transparent;
-    border-left: 6px solid var(--panel);
-    transform: translate(0, -50%);
+    font-variant-numeric: tabular-nums;
   }
 </style>
