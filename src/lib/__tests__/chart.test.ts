@@ -114,39 +114,67 @@ describe('sparklineMax', () => {
 })
 
 describe('tipPlacement', () => {
-  it('centers on the marker and anchors to the top when there is room', () => {
-    expect(tipPlacement(100, 80, 80, 0, 200, 30, 56)).toEqual({
-      boxX: 100,
-      caretX: 100,
-      anchorY: 80,
-      flip: false,
+  const wide = { left: 0, top: 0, right: 400, bottom: 200 }
+  // Short container so both vertical sides can fail, forcing a horizontal pick.
+  const short = { left: 0, top: 0, right: 400, bottom: 60 }
+
+  it('places above and points the caret down at the marker when there is room', () => {
+    expect(tipPlacement(200, 150, 100, 40, wide)).toEqual({
+      side: 'above',
+      left: 150,
+      top: 100,
+      caretLeft: 200,
+      caretTop: 140,
     })
   })
 
-  it('clamps the box left while the caret keeps tracking the marker', () => {
-    const p = tipPlacement(10, 60, 60, 0, 200, 30, 56)
-    expect(p.boxX).toBe(30)
-    expect(p.caretX).toBe(10)
-  })
-
-  it('clamps the box right while the caret keeps tracking the marker', () => {
-    const p = tipPlacement(190, 60, 60, 0, 200, 30, 56)
-    expect(p.boxX).toBe(170)
-    expect(p.caretX).toBe(190)
-  })
-
-  it('flips below and anchors to the lowest marker near the ceiling', () => {
-    expect(tipPlacement(100, 20, 90, 0, 200, 30, 56)).toEqual({
-      boxX: 100,
-      caretX: 100,
-      anchorY: 90,
-      flip: true,
+  it('flips below the marker when there is no room above', () => {
+    expect(tipPlacement(200, 20, 100, 40, wide)).toEqual({
+      side: 'below',
+      left: 150,
+      top: 30,
+      caretLeft: 200,
+      caretTop: 30,
     })
   })
 
-  it('falls back to the marker x when the plot is too narrow to clamp', () => {
-    const p = tipPlacement(40, 60, 60, 30, 70, 30, 56)
-    expect(p.boxX).toBe(40)
+  it('places to the right when neither vertical side fits', () => {
+    expect(tipPlacement(100, 30, 100, 40, short)).toEqual({
+      side: 'right',
+      left: 110,
+      top: 10,
+      caretLeft: 110,
+      caretTop: 30,
+    })
+  })
+
+  it('places to the left when right has no room either', () => {
+    expect(tipPlacement(350, 30, 100, 40, short)).toEqual({
+      side: 'left',
+      left: 240,
+      top: 10,
+      caretLeft: 340,
+      caretTop: 30,
+    })
+  })
+
+  it('clamps the box to the left edge while the caret tracks the marker', () => {
+    const p = tipPlacement(10, 150, 100, 40, wide)
+    expect(p.side).toBe('above')
+    expect(p.left).toBe(4)
+    expect(p.caretLeft).toBe(10)
+  })
+
+  it('clamps the box to the right edge while the caret tracks the marker', () => {
+    const p = tipPlacement(395, 150, 100, 40, wide)
+    expect(p.side).toBe('above')
+    expect(p.left).toBe(296)
+    expect(p.caretLeft).toBe(395)
+  })
+
+  it('falls back to the side with the most space when none fit', () => {
+    const tiny = { left: 0, top: 0, right: 50, bottom: 50 }
+    expect(tipPlacement(25, 10, 100, 40, tiny).side).toBe('below')
   })
 })
 

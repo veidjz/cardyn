@@ -41,39 +41,83 @@ export function alignSeries(columns: number[][]): number[][] {
   return columns.map((c) => c.slice(c.length - len))
 }
 
-export interface TipPlacement {
-  // Box center x (CSS px, relative to the chart container) after horizontal
-  // clamping; the caret keeps tracking the true marker x.
-  boxX: number
-  caretX: number
-  // Anchor y the box hangs from: the topmost marker normally, the lowest when
-  // flipped below.
-  anchorY: number
-  // True when the box is placed BELOW the markers (caret points up) because it
-  // would otherwise clip past the container top.
-  flip: boolean
+export type TipSide = 'above' | 'below' | 'right' | 'left'
+
+export interface TipBounds {
+  left: number
+  top: number
+  right: number
+  bottom: number
 }
 
-// Pure geometry for the at-point inspect tooltip. All inputs are CSS px relative
-// to the chart container. `cx` is the marker x; `topY`/`bottomY` are the highest
-// and lowest markers' y. The box centers on `cx` but is clamped horizontally so
-// it stays within [plotLeft, plotRight] by its estimated `halfWidth` (caret
-// still tracks `cx`). When the topmost marker sits within `upReach` of the
-// container top the box would clip above, so it flips to hang below `bottomY`.
+export interface TipPlacement {
+  // Side of the marker the tooltip box sits on.
+  side: TipSide
+  // Top-left corner of the box (CSS px relative to the chart container), clamped
+  // so the box never overflows `bounds`.
+  left: number
+  top: number
+  // The caret anchor on the box edge nearest the marker; tracks the marker (cx
+  // for above/below, cy for right/left), kept within the box span.
+  caretLeft: number
+  caretTop: number
+}
+
+// Gap between the marker and the nearest box edge (the caret lives here) and the
+// minimum margin kept between the box and the container edge when clamping.
+const TIP_GAP = 10
+const TIP_MARGIN = 4
+
+// Pure geometry for the at-point inspect tooltip. `(cx, cy)` is the marker in CSS
+// px relative to the chart container; `tipW`/`tipH` is the measured box size;
+// `bounds` is the container box. Picks the first side with room in the order
+// above -> below -> right -> left (else the side with the most space), centers the
+// box on the marker along the free axis, and clamps both axes so the box stays
+// inside `bounds`. The caret keeps tracking the marker within the box span.
 export function tipPlacement(
   cx: number,
-  topY: number,
-  bottomY: number,
-  plotLeft: number,
-  plotRight: number,
-  halfWidth: number,
-  upReach: number,
+  cy: number,
+  tipW: number,
+  tipH: number,
+  bounds: TipBounds,
 ): TipPlacement {
-  const flip = topY < upReach
-  const lo = plotLeft + halfWidth
-  const hi = plotRight - halfWidth
-  const boxX = hi < lo ? cx : Math.min(Math.max(cx, lo), hi)
-  return { boxX, caretX: cx, anchorY: flip ? bottomY : topY, flip }
+  const spaceAbove = cy - bounds.top
+  const spaceBelow = bounds.bottom - cy
+  const spaceRight = bounds.right - cx
+  const spaceLeft = cx - bounds.left
+
+  const candidates: { side: TipSide; fits: boolean; space: number }[] = [
+    { side: 'above', fits: spaceAbove >= tipH + TIP_GAP, space: spaceAbove },
+    { side: 'below', fits: spaceBelow >= tipH + TIP_GAP, space: spaceBelow },
+    { side: 'right', fits: spaceRight >= tipW + TIP_GAP, space: spaceRight },
+    { side: 'left', fits: spaceLeft >= tipW + TIP_GAP, space: spaceLeft },
+  ]
+  const chosen =
+    candidates.find((c) => c.fits) ??
+    candidates.reduce((best, c) => (c.space > best.space ? c : best))
+  const side = chosen.side
+
+  const minLeft = bounds.left + TIP_MARGIN
+  const maxLeft = bounds.right - TIP_MARGIN - tipW
+  const clampLeft = (l: number) =>
+    maxLeft < minLeft ? l : Math.min(Math.max(l, minLeft), maxLeft)
+  const minTop = bounds.top + TIP_MARGIN
+  const maxTop = bounds.bottom - TIP_MARGIN - tipH
+  const clampTop = (t: number) =>
+    maxTop < minTop ? t : Math.min(Math.max(t, minTop), maxTop)
+
+  if (side === 'above' || side === 'below') {
+    const left = clampLeft(cx - tipW / 2)
+    const top = clampTop(side === 'above' ? cy - TIP_GAP - tipH : cy + TIP_GAP)
+    const caretLeft = Math.min(Math.max(cx, left), left + tipW)
+    const caretTop = side === 'above' ? top + tipH : top
+    return { side, left, top, caretLeft, caretTop }
+  }
+  const top = clampTop(cy - tipH / 2)
+  const left = clampLeft(side === 'right' ? cx + TIP_GAP : cx - TIP_GAP - tipW)
+  const caretTop = Math.min(Math.max(cy, top), top + tipH)
+  const caretLeft = side === 'right' ? left : left + tipW
+  return { side, left, top, caretLeft, caretTop }
 }
 
 export function ringFraction(value: number | null, max: number): number {
