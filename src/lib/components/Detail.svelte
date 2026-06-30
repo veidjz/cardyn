@@ -214,6 +214,38 @@
       </div>
     {/if}
   </div>
+
+  {#if metric === 'cpu' || metric === 'mem'}
+    {@const procs =
+      metric === 'cpu' ? (snap?.topByCpu ?? []) : (snap?.topByMem ?? [])}
+    <div class="procs">
+      <h2 class="proc-title">Top Processes</h2>
+      {#if procs.length > 0}
+        <table class="proc-table">
+          <thead>
+            <tr>
+              <th class="num pid">PID</th>
+              <th class="name">Name</th>
+              <th class="num cpu">CPU%</th>
+              <th class="num mem">Memory</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each procs as p (p.pid)}
+              <tr>
+                <td class="num pid">{p.pid}</td>
+                <td class="name">{p.name}</td>
+                <td class="num cpu">{formatPercent(p.cpuPct)}</td>
+                <td class="num mem">{formatBytes(p.memBytes)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {:else}
+        <span class="value muted">--</span>
+      {/if}
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -415,5 +447,68 @@
     width: 100%;
     background: var(--accent);
     transition: height 0.3s ease;
+  }
+
+  /* Top process table (cpu + mem only) */
+  .procs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 16px;
+    border-top: 1px solid var(--hair);
+  }
+
+  .proc-title {
+    margin: 0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+  }
+
+  .proc-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .proc-table th {
+    padding: 4px 0;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--muted);
+    text-align: right;
+    border-bottom: 1px solid var(--hair);
+  }
+
+  .proc-table td {
+    padding: 5px 0;
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+
+  .proc-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .proc-table .pid {
+    width: 52px;
+  }
+
+  .proc-table .cpu {
+    width: 58px;
+  }
+
+  .proc-table .mem {
+    width: 82px;
+  }
+
+  .proc-table .name {
+    padding-right: 12px;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>
