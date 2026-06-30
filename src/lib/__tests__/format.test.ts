@@ -88,18 +88,28 @@ describe('formatBps', () => {
 describe('formatClock', () => {
   // Build the unix-seconds input from a local Date so the expectation holds in
   // any timezone (local components in, local components out).
-  it('formats local time as zero-padded HH:MM:SS', () => {
+  it('formats morning time as 12-hour with am and no hour pad', () => {
     const d = new Date(2026, 0, 2, 3, 4, 5)
-    expect(formatClock(d.getTime() / 1000)).toBe('03:04:05')
+    expect(formatClock(d.getTime() / 1000)).toBe('3:04:05 am')
   })
 
-  it('renders midnight as 00:00:00', () => {
-    const d = new Date(2026, 0, 1, 0, 0, 0)
-    expect(formatClock(d.getTime() / 1000)).toBe('00:00:00')
-  })
-
-  it('keeps two-digit fields without padding', () => {
+  it('formats afternoon time as 12-hour with pm', () => {
     const d = new Date(2026, 0, 1, 13, 25, 59)
-    expect(formatClock(d.getTime() / 1000)).toBe('13:25:59')
+    expect(formatClock(d.getTime() / 1000)).toBe('1:25:59 pm')
+  })
+
+  it('renders midnight as 12:00:00 am', () => {
+    const d = new Date(2026, 0, 1, 0, 0, 0)
+    expect(formatClock(d.getTime() / 1000)).toBe('12:00:00 am')
+  })
+
+  it('renders noon as 12:00:00 pm', () => {
+    const d = new Date(2026, 0, 1, 12, 0, 0)
+    expect(formatClock(d.getTime() / 1000)).toBe('12:00:00 pm')
+  })
+
+  it('keeps minutes and seconds zero-padded', () => {
+    const d = new Date(2026, 0, 1, 9, 3, 7)
+    expect(formatClock(d.getTime() / 1000)).toBe('9:03:07 am')
   })
 })

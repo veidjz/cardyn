@@ -206,8 +206,10 @@
           // strictly inside the current window with a capped count, so the labels
           // are always correct in-window HH:MM:SS, never overflow, and never carry
           // a stray far-off boundary value.
+          // Cap at 5 ticks: the am/pm suffix widens each label (~`12:00:00 pm`),
+          // so a lower count keeps the spacing comfortable at the detail width.
           splits: (u: uPlot) =>
-            timeTicks(u.scales.x.min ?? NaN, u.scales.x.max ?? NaN),
+            timeTicks(u.scales.x.min ?? NaN, u.scales.x.max ?? NaN, 5),
           // As the window scrolls, the leftmost HH:MM:SS label (centered on its
           // tick) would poke past the plot's left edge into the y-axis gutter
           // just before it scrolls off. valToPos(s, 'x') is CSS px from the
