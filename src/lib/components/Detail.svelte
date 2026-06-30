@@ -1,7 +1,13 @@
 <script lang="ts">
   import { metrics } from '$lib/metrics.svelte'
   import { metricMeta } from '$lib/metric-meta'
-  import { formatBytes, formatBps } from '$lib/format'
+  import {
+    formatBytes,
+    formatBps,
+    formatPercent,
+    formatFreq,
+  } from '$lib/format'
+  import { ringFraction, memSegments } from '$lib/chart'
   import Ring from '$lib/components/Ring.svelte'
   import HistoryChart from '$lib/components/HistoryChart.svelte'
   import type { MetricKey } from '$lib/types'
@@ -13,10 +19,25 @@
 
   // CPU
   const cpu = $derived(snap?.cpuTotal ?? null)
+  const cores = $derived(snap?.cpuPerCore ?? null)
+  const freq = $derived(snap?.cpuFreqMhz ?? null)
 
   // Memory
   const memPct = $derived(
     snap && snap.memTotal > 0 ? (snap.memUsed / snap.memTotal) * 100 : null,
+  )
+  const seg = $derived(
+    snap
+      ? memSegments(
+          snap.memUsed,
+          snap.memAvailable,
+          snap.memFree,
+          snap.memTotal,
+        )
+      : null,
+  )
+  const swapPct = $derived(
+    snap && snap.swapTotal > 0 ? (snap.swapUsed / snap.swapTotal) * 100 : null,
   )
 
   // GPU
@@ -24,6 +45,14 @@
   const gpuMem = $derived(snap?.gpu.memUsed ?? null)
   const vram = $derived(snap?.gpu.vramTotal ?? null)
   const gpuNa = $derived(gpuUtil === null)
+  const vramPct = $derived(
+    snap &&
+      snap.gpu.vramTotal !== null &&
+      snap.gpu.vramTotal > 0 &&
+      snap.gpu.memUsed !== null
+      ? (snap.gpu.memUsed / snap.gpu.vramTotal) * 100
+      : null,
+  )
 
   // Disk
   const diskPct = $derived(
@@ -69,6 +98,122 @@
   </div>
 
   <HistoryChart {metric} />
+
+  <div class="breakdown" style="--accent: var(--{metric})">
+    {#if metric === 'cpu'}
+      {#if cores && cores.length > 0}
+        <div class="cores" aria-label="Per-core usage">
+          {#each cores as pct, i (i)}
+            <div class="core" title="Core {i}: {formatPercent(pct)}">
+              <div
+                class="core-fill"
+                style="height: {ringFraction(pct, 100) * 100}%"
+              ></div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <span class="value muted">--</span>
+      {/if}
+      <div class="row">
+        <span class="label">Frequency</span>
+        <span class="value">{formatFreq(freq)}</span>
+      </div>
+    {:else if metric === 'mem'}
+      <div class="seg-bar" aria-hidden="true">
+        {#if seg}
+          <div class="seg used" style="width: {seg.used * 100}%"></div>
+          <div class="seg avail" style="width: {seg.available * 100}%"></div>
+          <div class="seg free" style="width: {seg.free * 100}%"></div>
+        {/if}
+      </div>
+      <div class="legend">
+        <div class="row">
+          <span class="label"><span class="key used"></span>Used</span>
+          <span class="value">{formatBytes(snap?.memUsed ?? null)}</span>
+        </div>
+        <div class="row">
+          <span class="label"><span class="key avail"></span>Available</span>
+          <span class="value">{formatBytes(snap?.memAvailable ?? null)}</span>
+        </div>
+        <div class="row">
+          <span class="label"><span class="key free"></span>Free</span>
+          <span class="value">{formatBytes(snap?.memFree ?? null)}</span>
+        </div>
+      </div>
+      <div class="hr"></div>
+      <div class="row">
+        <span class="label">Swap</span>
+        <span class="value"
+          >{formatBytes(snap?.swapUsed ?? null)} / {formatBytes(
+            snap?.swapTotal ?? null,
+          )}</span
+        >
+      </div>
+      <div class="bar">
+        <div
+          class="fill"
+          style="width: {ringFraction(swapPct, 100) * 100}%"
+        ></div>
+      </div>
+    {:else if metric === 'gpu'}
+      {#if gpuMem === null}
+        <div class="row">
+          <span class="label">VRAM</span>
+          <span class="value muted">N/A</span>
+        </div>
+      {:else if vram === null}
+        <div class="row">
+          <span class="label">VRAM</span>
+          <span class="value">{formatBytes(gpuMem)}</span>
+        </div>
+      {:else}
+        <div class="row">
+          <span class="label">VRAM</span>
+          <span class="value">{formatBytes(gpuMem)} / {formatBytes(vram)}</span>
+        </div>
+        <div class="bar">
+          <div
+            class="fill"
+            style="width: {ringFraction(vramPct, 100) * 100}%"
+          ></div>
+        </div>
+      {/if}
+    {:else if metric === 'disk'}
+      <div class="row">
+        <span class="label">Read</span>
+        <span class="value">{formatBps(snap?.diskReadBps ?? null)}</span>
+      </div>
+      <div class="row">
+        <span class="label">Write</span>
+        <span class="value">{formatBps(snap?.diskWriteBps ?? null)}</span>
+      </div>
+      <div class="hr"></div>
+      <div class="row">
+        <span class="label">Space</span>
+        <span class="value"
+          >{snap && snap.diskTotal > 0
+            ? formatBytes(snap.diskUsed) + ' / ' + formatBytes(snap.diskTotal)
+            : '--'}</span
+        >
+      </div>
+      <div class="bar">
+        <div
+          class="fill"
+          style="width: {ringFraction(diskPct, 100) * 100}%"
+        ></div>
+      </div>
+    {:else}
+      <div class="row">
+        <span class="label">Download</span>
+        <span class="value">↓ {formatBps(snap?.netRxBps ?? null)}</span>
+      </div>
+      <div class="row">
+        <span class="label">Upload</span>
+        <span class="value">↑ {formatBps(snap?.netTxBps ?? null)}</span>
+      </div>
+    {/if}
+  </div>
 </section>
 
 <style>
@@ -139,5 +284,136 @@
     margin: 0;
     color: var(--muted);
     font-size: 0.8rem;
+  }
+
+  /* Per-metric breakdown ------------------------------------------------ */
+  .breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 16px;
+    border-top: 1px solid var(--hair);
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+
+  .value {
+    color: var(--text);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .value.muted {
+    color: var(--muted);
+  }
+
+  .bar {
+    height: 6px;
+    background: var(--track);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  .hr {
+    height: 1px;
+    background: var(--hair);
+  }
+
+  /* Memory segmented bar + legend */
+  .seg-bar {
+    display: flex;
+    height: 8px;
+    background: var(--track);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .seg {
+    height: 100%;
+  }
+
+  .seg.used {
+    background: var(--accent);
+  }
+
+  .seg.avail {
+    background: var(--accent);
+    opacity: 0.35;
+  }
+
+  .seg.free {
+    background: transparent;
+  }
+
+  .legend {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .key {
+    flex: none;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+  }
+
+  .key.used {
+    background: var(--accent);
+  }
+
+  .key.avail {
+    background: var(--accent);
+    opacity: 0.35;
+  }
+
+  .key.free {
+    background: var(--track);
+    border: 1px solid var(--hair);
+  }
+
+  /* CPU per-core equalizer */
+  .cores {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .core {
+    flex: 1 1 5px;
+    min-width: 3px;
+    max-width: 18px;
+    height: 44px;
+    background: var(--track);
+    border-radius: 2px;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-end;
+  }
+
+  .core-fill {
+    width: 100%;
+    background: var(--accent);
+    transition: height 0.3s ease;
   }
 </style>

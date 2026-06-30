@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   ringFraction,
+  memSegments,
   sparklineMax,
   sparklinePoints,
   chartSeries,
@@ -93,6 +94,37 @@ describe('ringFraction', () => {
 
   it('clamps below 0 to 0', () => {
     expect(ringFraction(-5, 100)).toBe(0)
+  })
+})
+
+describe('memSegments', () => {
+  it('returns all-zero for a zero or negative total (no false bar)', () => {
+    expect(memSegments(0, 0, 0, 0)).toEqual({
+      used: 0,
+      available: 0,
+      free: 0,
+    })
+    expect(memSegments(5, 5, 5, -1)).toEqual({
+      used: 0,
+      available: 0,
+      free: 0,
+    })
+  })
+
+  it('splits each part as a fraction of total', () => {
+    expect(memSegments(50, 30, 20, 100)).toEqual({
+      used: 0.5,
+      available: 0.3,
+      free: 0.2,
+    })
+  })
+
+  it('clamps each fraction to [0, 1]', () => {
+    expect(memSegments(200, -10, 0, 100)).toEqual({
+      used: 1,
+      available: 0,
+      free: 0,
+    })
   })
 })
 

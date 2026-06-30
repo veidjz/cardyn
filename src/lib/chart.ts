@@ -159,6 +159,31 @@ export function ringFraction(value: number | null, max: number): number {
   return frac
 }
 
+export interface MemSegments {
+  used: number
+  available: number
+  free: number
+}
+
+// Fractions (0-1) of total memory for the Used | Available | Free segments of
+// the memory breakdown bar. total <= 0 -> all zero (no false bar when totals
+// are unknown). Each fraction clamps to [0, 1]; negatives clamp to 0.
+export function memSegments(
+  used: number,
+  available: number,
+  free: number,
+  total: number,
+): MemSegments {
+  if (total <= 0) return { used: 0, available: 0, free: 0 }
+  const frac = (v: number) => {
+    const f = v / total
+    if (f < 0) return 0
+    if (f > 1) return 1
+    return f
+  }
+  return { used: frac(used), available: frac(available), free: frac(free) }
+}
+
 /// Max for an auto-scaling sparkline (throughput): the window max, but never
 /// below `floor` (avoids a flat/zero-division axis when idle). Empty -> floor.
 export function sparklineMax(values: number[], floor: number): number {
