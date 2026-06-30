@@ -258,6 +258,14 @@
     }
 
     u = new UPlot(opts, data as uPlot.AlignedData, el)
+    // At a fresh boot the ring buffers are empty, so there is no x range and no
+    // time labels until the first 1 Hz tick. Seed a ~60s window ending at now so
+    // HH:MM:SS labels show from the first frame. No static range is set, so the
+    // first live setData re-ranges x as usual and scrolling is unchanged.
+    if (data[0].length === 0) {
+      const now = Date.now() / 1000
+      u.setScale('x', { min: now - WINDOW, max: now })
+    }
     el.addEventListener('click', onChartClick)
 
     // Anchor the card at the pinned sample, in CSS px relative to `.chart`.
