@@ -388,10 +388,24 @@
     }
   }
 
+  /* Subtle one-shot entrance when the chart mounts, echoing the donut ring.
+     Runs once (no iteration count), auto-terminating - no raf/per-tick loop. */
+  @keyframes chart-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   .chart {
     width: 100%;
     position: relative;
     overflow: visible;
+    animation: chart-in 180ms ease-out;
   }
 
   /* Floating focus card ------------------------------------------------ */
