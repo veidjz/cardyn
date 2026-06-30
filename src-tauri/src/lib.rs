@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use tauri::Manager;
 
-use crate::metrics::{MetricsSnapshot, RingBuffer};
+use crate::metrics::{Histories, MetricsSnapshot};
 
 pub mod gpu;
 pub mod metrics;
@@ -13,44 +13,37 @@ mod tray;
 ///
 /// Both fields are guarded by a `Mutex` so the sampler thread and any IPC
 /// command can read or update them concurrently. `last` holds the most recent
-/// snapshot (`None` until the first tick); `cpu_history` is the bounded ring
-/// buffer feeding the live history window.
+/// snapshot (`None` until the first tick); `histories` holds one bounded ring
+/// buffer per metric series, feeding the live history window.
 pub struct AppState {
     pub last: Mutex<Option<MetricsSnapshot>>,
-    pub cpu_history: Mutex<RingBuffer>,
+    pub histories: Mutex<Histories>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             last: Mutex::new(None),
-            cpu_history: Mutex::new(RingBuffer::with_default_capacity()),
+            histories: Mutex::new(Histories::default()),
         }
     }
 }
 
-/// Return the live history for one metric series. Only `Cpu` is backed by a
-/// ring buffer so far; the remaining series get real buffers in a later phase
-/// and report an empty history until then. An invalid `metric` value fails
-/// deserialization at the IPC boundary and never reaches this function.
+/// Return the live history for one metric series, reading the series' ring
+/// buffer. A series with no points yet reports an empty history. An invalid
+/// `metric` value fails deserialization at the IPC boundary and never reaches
+/// this function. Mutex poisoning is tolerated: a poisoned guard's inner value
+/// is still a valid history to read.
 #[tauri::command]
 fn get_history(
     metric: crate::metrics::HistoryMetric,
     state: tauri::State<AppState>,
 ) -> crate::metrics::History {
-    use crate::metrics::{History, HistoryMetric};
-    match metric {
-        HistoryMetric::Cpu => state
-            .cpu_history
-            .lock()
-            .map(|h| h.history())
-            .unwrap_or_else(|p| p.into_inner().history()),
-        // Other series get real ring buffers in P4; until then report empty history.
-        _ => History {
-            t: Vec::new(),
-            v: Vec::new(),
-        },
-    }
+    state
+        .histories
+        .lock()
+        .map(|h| h.history(metric))
+        .unwrap_or_else(|p| p.into_inner().history(metric))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

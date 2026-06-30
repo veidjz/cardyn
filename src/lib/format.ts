@@ -46,3 +46,15 @@ export function formatBps(bytesPerSec: number | null): string {
   if (bytesPerSec === null) return '--'
   return `${scaleBytes(bytesPerSec)}/s`
 }
+
+// Local wall-clock 12-hour h:mm:ss with a lowercase am/pm suffix for a
+// unix-seconds timestamp. Hour is 1-12 (no zero-pad); minutes/seconds stay
+// zero-padded; one space before am/pm.
+export function formatClock(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const h24 = d.getHours()
+  const suffix = h24 < 12 ? 'am' : 'pm'
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12
+  return `${h12}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${suffix}`
+}

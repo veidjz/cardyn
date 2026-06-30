@@ -1,5 +1,83 @@
 import { describe, it, expect } from 'vitest'
-import { ringFraction, sparklineMax, sparklinePoints } from '../chart'
+import {
+  ringFraction,
+  memSegments,
+  sparklineMax,
+  sparklinePoints,
+  chartSeries,
+  alignSeries,
+  isPercentMetric,
+  tipPlacement,
+  timeTicks,
+} from '../chart'
+
+describe('chartSeries', () => {
+  it('maps single-line metrics to one series', () => {
+    expect(chartSeries('cpu')).toEqual([{ series: 'cpu', label: 'CPU' }])
+    expect(chartSeries('mem')).toEqual([{ series: 'mem', label: 'Used' }])
+    expect(chartSeries('gpu')).toEqual([
+      { series: 'gpuUtil', label: 'Utilization' },
+    ])
+  })
+
+  it('maps disk and network to two series each', () => {
+    expect(chartSeries('disk')).toEqual([
+      { series: 'diskRead', label: 'Read' },
+      { series: 'diskWrite', label: 'Write' },
+    ])
+    expect(chartSeries('net')).toEqual([
+      { series: 'netRx', label: 'Down' },
+      { series: 'netTx', label: 'Up' },
+    ])
+  })
+})
+
+describe('isPercentMetric', () => {
+  it('is true for percentage metrics', () => {
+    expect(isPercentMetric('cpu')).toBe(true)
+    expect(isPercentMetric('gpu')).toBe(true)
+  })
+
+  it('is false for byte/throughput metrics', () => {
+    expect(isPercentMetric('mem')).toBe(false)
+    expect(isPercentMetric('disk')).toBe(false)
+    expect(isPercentMetric('net')).toBe(false)
+  })
+})
+
+describe('alignSeries', () => {
+  it('returns [] for empty input', () => {
+    expect(alignSeries([])).toEqual([])
+  })
+
+  it('leaves equal-length columns unchanged', () => {
+    expect(
+      alignSeries([
+        [1, 2, 3],
+        [4, 5, 6],
+      ]),
+    ).toEqual([
+      [1, 2, 3],
+      [4, 5, 6],
+    ])
+  })
+
+  it('truncates to the shortest, keeping the most recent points', () => {
+    expect(
+      alignSeries([
+        [1, 2, 3, 4],
+        [5, 6],
+      ]),
+    ).toEqual([
+      [3, 4],
+      [5, 6],
+    ])
+  })
+
+  it('collapses to empty columns when one column is empty', () => {
+    expect(alignSeries([[1, 2], []])).toEqual([[], []])
+  })
+})
 
 describe('ringFraction', () => {
   it('returns 0 for null', () => {
@@ -19,6 +97,37 @@ describe('ringFraction', () => {
   })
 })
 
+describe('memSegments', () => {
+  it('returns all-zero for a zero or negative total (no false bar)', () => {
+    expect(memSegments(0, 0, 0, 0)).toEqual({
+      used: 0,
+      available: 0,
+      free: 0,
+    })
+    expect(memSegments(5, 5, 5, -1)).toEqual({
+      used: 0,
+      available: 0,
+      free: 0,
+    })
+  })
+
+  it('splits each part as a fraction of total', () => {
+    expect(memSegments(50, 30, 20, 100)).toEqual({
+      used: 0.5,
+      available: 0.3,
+      free: 0.2,
+    })
+  })
+
+  it('clamps each fraction to [0, 1]', () => {
+    expect(memSegments(200, -10, 0, 100)).toEqual({
+      used: 1,
+      available: 0,
+      free: 0,
+    })
+  })
+})
+
 describe('sparklineMax', () => {
   it('returns floor for an empty window', () => {
     expect(sparklineMax([], 1)).toBe(1)
@@ -34,6 +143,145 @@ describe('sparklineMax', () => {
 
   it('ignores negatives and stays at floor', () => {
     expect(sparklineMax([-10, -3], 1)).toBe(1)
+  })
+})
+
+describe('tipPlacement', () => {
+  const wide = { left: 0, top: 0, right: 400, bottom: 200 }
+  // Short container so both vertical sides can fail, forcing a horizontal pick.
+  const short = { left: 0, top: 0, right: 400, bottom: 60 }
+
+  it('places above and points the caret down at the marker when there is room', () => {
+    expect(tipPlacement(200, 150, 100, 40, wide)).toEqual({
+      side: 'above',
+      left: 150,
+      top: 100,
+      caretLeft: 200,
+      caretTop: 140,
+    })
+  })
+
+  it('flips below the marker when there is no room above', () => {
+    expect(tipPlacement(200, 20, 100, 40, wide)).toEqual({
+      side: 'below',
+      left: 150,
+      top: 30,
+      caretLeft: 200,
+      caretTop: 30,
+    })
+  })
+
+  it('places to the right when neither vertical side fits', () => {
+    expect(tipPlacement(100, 30, 100, 40, short)).toEqual({
+      side: 'right',
+      left: 110,
+      top: 10,
+      caretLeft: 110,
+      caretTop: 30,
+    })
+  })
+
+  it('places to the left when right has no room either', () => {
+    expect(tipPlacement(350, 30, 100, 40, short)).toEqual({
+      side: 'left',
+      left: 240,
+      top: 10,
+      caretLeft: 340,
+      caretTop: 30,
+    })
+  })
+
+  it('clamps the box to the left edge while the caret tracks the marker', () => {
+    const p = tipPlacement(10, 150, 100, 40, wide)
+    expect(p.side).toBe('above')
+    expect(p.left).toBe(4)
+    expect(p.caretLeft).toBe(10)
+  })
+
+  it('clamps the box to the right edge while the caret tracks the marker', () => {
+    const p = tipPlacement(395, 150, 100, 40, wide)
+    expect(p.side).toBe('above')
+    expect(p.left).toBe(296)
+    expect(p.caretLeft).toBe(395)
+  })
+
+  it('falls back to the side with the most space when none fit', () => {
+    const tiny = { left: 0, top: 0, right: 50, bottom: 50 }
+    expect(tipPlacement(25, 10, 100, 40, tiny).side).toBe('below')
+  })
+})
+
+describe('timeTicks', () => {
+  // Epoch seconds of a local wall-clock time, so assertions hold in any
+  // whole-minute timezone (local in, epoch out).
+  const at = (h: number, m: number, s: number) =>
+    new Date(2026, 0, 2, h, m, s).getTime() / 1000
+
+  const diffs = (ticks: number[]) => ticks.slice(1).map((t, i) => t - ticks[i])
+
+  it('returns [] for an empty or inverted window', () => {
+    expect(timeTicks(100, 100)).toEqual([])
+    expect(timeTicks(100, 50)).toEqual([])
+    expect(timeTicks(NaN, 100)).toEqual([])
+    expect(timeTicks(100, NaN)).toEqual([])
+  })
+
+  it('spaces a ~60s window evenly at 15s, all in-window', () => {
+    const min = at(12, 0, 3)
+    const max = min + 59
+    const ticks = timeTicks(min, max)
+    expect(ticks.length).toBeGreaterThanOrEqual(3)
+    expect(new Set(diffs(ticks))).toEqual(new Set([15]))
+    for (const t of ticks) {
+      expect(t).toBeGreaterThanOrEqual(min)
+      expect(t).toBeLessThanOrEqual(max)
+      // Aligned to a clean 15s epoch boundary -> tidy :00/:15/:30/:45 labels.
+      expect(t % 15).toBe(0)
+    }
+  })
+
+  it('caps the count and never overflows', () => {
+    const min = at(12, 0, 0)
+    expect(timeTicks(min, min + 59).length).toBeLessThanOrEqual(6)
+    // A wider/transient window widens the step but stays capped + in-window.
+    const wide = timeTicks(min, min + 4 * 3600)
+    expect(wide.length).toBeLessThanOrEqual(6)
+    expect(new Set(diffs(wide))).toEqual(new Set([3600]))
+    expect(wide[0]).toBeGreaterThanOrEqual(min)
+    expect(wide[wide.length - 1]).toBeLessThanOrEqual(min + 4 * 3600)
+  })
+
+  it('stays in-window and evenly spaced across a minute rollover', () => {
+    const boundary = at(12, 1, 0)
+    const ticks = timeTicks(boundary - 20, boundary + 24)
+    expect(ticks).toContain(boundary)
+    expect(new Set(diffs(ticks))).toEqual(new Set([15]))
+    for (const t of ticks) {
+      expect(t).toBeGreaterThanOrEqual(boundary - 20)
+      expect(t).toBeLessThanOrEqual(boundary + 24)
+    }
+  })
+
+  it('stays in-window and evenly spaced across an hour rollover', () => {
+    const boundary = at(13, 0, 0)
+    const ticks = timeTicks(boundary - 20, boundary + 25)
+    expect(ticks).toContain(boundary)
+    expect(new Set(diffs(ticks))).toEqual(new Set([15]))
+    for (const t of ticks) {
+      expect(t).toBeGreaterThanOrEqual(boundary - 20)
+      expect(t).toBeLessThanOrEqual(boundary + 25)
+    }
+  })
+
+  it('handles a narrow window without emitting an out-of-window tick', () => {
+    const min = at(12, 0, 1)
+    const ticks = timeTicks(min, min + 16)
+    expect(ticks.length).toBeLessThanOrEqual(2)
+    for (const t of ticks) {
+      expect(t).toBeGreaterThanOrEqual(min)
+      expect(t).toBeLessThanOrEqual(min + 16)
+      expect(t % 15).toBe(0)
+    }
   })
 })
 

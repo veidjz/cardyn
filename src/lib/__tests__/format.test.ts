@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { formatPercent, formatFreq, formatBytes, formatBps } from '../format'
+import {
+  formatPercent,
+  formatFreq,
+  formatBytes,
+  formatBps,
+  formatClock,
+} from '../format'
 
 describe('formatPercent', () => {
   it('returns -- for null', () => {
@@ -76,5 +82,34 @@ describe('formatBps', () => {
 
   it('appends /s to MB', () => {
     expect(formatBps(2_097_152)).toBe('2.1 MB/s')
+  })
+})
+
+describe('formatClock', () => {
+  // Build the unix-seconds input from a local Date so the expectation holds in
+  // any timezone (local components in, local components out).
+  it('formats morning time as 12-hour with am and no hour pad', () => {
+    const d = new Date(2026, 0, 2, 3, 4, 5)
+    expect(formatClock(d.getTime() / 1000)).toBe('3:04:05 am')
+  })
+
+  it('formats afternoon time as 12-hour with pm', () => {
+    const d = new Date(2026, 0, 1, 13, 25, 59)
+    expect(formatClock(d.getTime() / 1000)).toBe('1:25:59 pm')
+  })
+
+  it('renders midnight as 12:00:00 am', () => {
+    const d = new Date(2026, 0, 1, 0, 0, 0)
+    expect(formatClock(d.getTime() / 1000)).toBe('12:00:00 am')
+  })
+
+  it('renders noon as 12:00:00 pm', () => {
+    const d = new Date(2026, 0, 1, 12, 0, 0)
+    expect(formatClock(d.getTime() / 1000)).toBe('12:00:00 pm')
+  })
+
+  it('keeps minutes and seconds zero-padded', () => {
+    const d = new Date(2026, 0, 1, 9, 3, 7)
+    expect(formatClock(d.getTime() / 1000)).toBe('9:03:07 am')
   })
 })
