@@ -1,12 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { metrics, startMetrics } from '$lib/metrics.svelte'
-  import {
-    formatPercent,
-    formatFreq,
-    formatBytes,
-    formatBps,
-  } from '$lib/format'
+  import { formatFreq, formatBytes, formatBps } from '$lib/format'
   import { sparklineMax } from '$lib/chart'
   import Ring from '$lib/components/Ring.svelte'
   import Sparkline from '$lib/components/Sparkline.svelte'
@@ -31,7 +26,7 @@
   const gpuUtil = $derived(snap?.gpu.utilization ?? null)
   const gpuMem = $derived(snap?.gpu.memUsed ?? null)
   const vram = $derived(snap?.gpu.vramTotal ?? null)
-  const gpuNa = $derived(gpuUtil === null && gpuMem === null)
+  const gpuNa = $derived(gpuUtil === null)
 
   // Disk
   const diskPct = $derived(
@@ -118,27 +113,14 @@
             <span class="big muted">N/A</span>
           </div>
           <p class="sub">--</p>
-        {:else if vram === null}
-          <div class="primary">
-            <span class="big" class:muted={gpuMem === null}
-              >{formatBytes(gpuMem)}</span
-            >
-          </div>
-          <p class="sub">
-            {gpuUtil !== null ? formatPercent(gpuUtil) + ' util' : '--'}
-          </p>
-          <Sparkline
-            data={metrics.history.gpu}
-            color="var(--gpu)"
-            max={100}
-            height={34}
-          />
         {:else}
           <div class="primary">
             <Ring value={gpuUtil} color="var(--gpu)" />
           </div>
           <p class="sub">
-            {formatBytes(gpuMem)} / {formatBytes(vram)}
+            {vram === null
+              ? formatBytes(gpuMem)
+              : formatBytes(gpuMem) + ' / ' + formatBytes(vram)}
           </p>
           <Sparkline
             data={metrics.history.gpu}

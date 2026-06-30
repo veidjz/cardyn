@@ -23,7 +23,7 @@
   const gpuUtil = $derived(snap?.gpu.utilization ?? null)
   const gpuMem = $derived(snap?.gpu.memUsed ?? null)
   const vram = $derived(snap?.gpu.vramTotal ?? null)
-  const gpuNa = $derived(gpuUtil === null && gpuMem === null)
+  const gpuNa = $derived(gpuUtil === null)
 
   // Disk
   const diskPct = $derived(
@@ -49,12 +49,15 @@
     {:else if metric === 'gpu'}
       {#if gpuNa}
         <span class="big muted">N/A</span>
-      {:else if vram !== null}
-        <Ring value={gpuUtil} color="var(--gpu)" />
       {:else}
-        <span class="big" class:muted={gpuMem === null}
-          >{formatBytes(gpuMem)}</span
-        >
+        <div class="gpu-primary">
+          <Ring value={gpuUtil} color="var(--gpu)" />
+          <p class="sub">
+            {vram === null
+              ? formatBytes(gpuMem)
+              : formatBytes(gpuMem) + ' / ' + formatBytes(vram)}
+          </p>
+        </div>
       {/if}
     {:else if metric === 'disk'}
       <Ring value={diskPct} color="var(--disk)" />
@@ -123,5 +126,18 @@
 
   .big.muted {
     color: var(--muted);
+  }
+
+  .gpu-primary {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .sub {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.8rem;
   }
 </style>
