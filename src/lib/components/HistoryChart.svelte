@@ -200,6 +200,11 @@
           stroke: muted,
           grid: { stroke: hair, width: 1 },
           ticks: { stroke: hair, width: 1 },
+          // Each HH:MM:SS label is ~70-80px wide; keep >=95px between ticks and
+          // snap the step to a round number of seconds so the ~60s window draws
+          // ~4-6 non-overlapping labels instead of one every 5s.
+          space: 95,
+          incrs: [15, 30, 60],
           values: (_u: uPlot, splits: number[]) =>
             splits.map((v) => formatClock(v)),
         },
