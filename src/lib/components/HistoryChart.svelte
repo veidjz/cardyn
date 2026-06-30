@@ -8,6 +8,7 @@
     alignSeries,
     isPercentMetric,
     tipPlacement,
+    timeTicks,
     type TipPlacement,
   } from '$lib/chart'
   import {
@@ -200,11 +201,13 @@
           stroke: muted,
           grid: { stroke: hair, width: 1 },
           ticks: { stroke: hair, width: 1 },
-          // Each HH:MM:SS label is ~70-80px wide; keep >=95px between ticks and
-          // snap the step to a round number of seconds so the ~60s window draws
-          // ~4-6 non-overlapping labels instead of one every 5s.
-          space: 95,
-          incrs: [15, 30, 60],
+          // Take full control of the time ticks instead of uPlot's auto-increment
+          // generator: timeTicks returns evenly-spaced, clean-stepped timestamps
+          // strictly inside the current window with a capped count, so the labels
+          // are always correct in-window HH:MM:SS, never overflow, and never carry
+          // a stray far-off boundary value.
+          splits: (u: uPlot) =>
+            timeTicks(u.scales.x.min ?? NaN, u.scales.x.max ?? NaN),
           // As the window scrolls, the leftmost HH:MM:SS label (centered on its
           // tick) would poke past the plot's left edge into the y-axis gutter
           // just before it scrolls off. valToPos(s, 'x') is CSS px from the
@@ -213,8 +216,11 @@
           // overlap the y-axis. The right side is unaffected.
           filter: (u: uPlot, splits: number[]) =>
             splits.map((s) => (u.valToPos(s, 'x') < 40 ? null : s)),
+          // uPlot feeds the filtered splits here, so a dropped tick arrives as
+          // null - pass it through untouched (formatClock(null) would render the
+          // Unix epoch as a far-off local time, e.g. 21:00:00).
           values: (_u: uPlot, splits: number[]) =>
-            splits.map((v) => formatClock(v)),
+            splits.map((v) => (v == null ? null : formatClock(v))),
         },
         {
           stroke: muted,

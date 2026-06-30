@@ -41,6 +41,37 @@ export function alignSeries(columns: number[][]): number[][] {
   return columns.map((c) => c.slice(c.length - len))
 }
 
+// Clean step ladder (seconds) for the live time axis: 15s for the ~60s window
+// (~4 ticks), widening for wider/transient windows so the tick count stays
+// capped. Steps are factors of a minute, so ticks land on tidy :00/:15/:30/:45.
+const TICK_STEPS = [15, 30, 60, 300, 600, 900, 1800, 3600]
+// Most labels to emit. Each HH:MM:SS label is ~70-80px, so ~6 keeps a typical
+// 300-700px axis uncrowded and never overflows.
+const MAX_TICKS = 6
+
+// Deterministic, in-window tick timestamps for the x (time) axis. Given the
+// current window `[min, max]` in epoch seconds, returns ticks aligned to a clean
+// step (epoch multiples of `step`, which render as tidy :00/:15/:30/:45 local
+// seconds in any whole-minute timezone), every tick inside `[min, max]`, with
+// the count capped so labels never overflow. Replaces uPlot's auto time-tick
+// generation, whose tick set/count shifted as the window scrolled and re-ranged.
+export function timeTicks(
+  min: number,
+  max: number,
+  maxTicks = MAX_TICKS,
+): number[] {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return []
+  const span = max - min
+  // Smallest clean step that keeps the count within the cap; widen for wider
+  // windows, falling back to the coarsest step for anything beyond the ladder.
+  const step =
+    TICK_STEPS.find((s) => span / s <= maxTicks - 1) ??
+    TICK_STEPS[TICK_STEPS.length - 1]
+  const ticks: number[] = []
+  for (let t = Math.ceil(min / step) * step; t <= max; t += step) ticks.push(t)
+  return ticks
+}
+
 export type TipSide = 'above' | 'below' | 'right' | 'left'
 
 export interface TipBounds {
