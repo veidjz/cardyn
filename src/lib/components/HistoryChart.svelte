@@ -426,6 +426,13 @@
     overflow: visible;
   }
 
+  /* Show every series always: kill uPlot's click-to-hide legend toggle while
+     keeping the legend labels + live hover values (written programmatically on
+     plot-area cursor, not via pointer events on the legend). */
+  .chart :global(.u-legend) {
+    pointer-events: none;
+  }
+
   /* At-point tooltip --------------------------------------------------- */
   .tip {
     position: absolute;
