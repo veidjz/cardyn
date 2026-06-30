@@ -53,6 +53,12 @@ jobs:
       - name: vitest
         run: pnpm exec vitest run
 
+      - name: build frontend
+        run: pnpm build
+
+      - name: bundle budget
+        run: pnpm check:bundle
+
   build:
     runs-on: macos-latest
     steps:
