@@ -1,9 +1,15 @@
 <script lang="ts">
-  import { onMount, onDestroy, untrack } from 'svelte'
+  import { onMount, onDestroy, untrack, tick } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { metrics } from '$lib/metrics.svelte'
   import { metricMeta } from '$lib/metric-meta'
-  import { chartSeries, alignSeries, isPercentMetric } from '$lib/chart'
+  import {
+    chartSeries,
+    alignSeries,
+    isPercentMetric,
+    tipPlacement,
+    type TipPlacement,
+  } from '$lib/chart'
   import {
     formatPercent,
     formatBytes,
@@ -67,9 +73,20 @@
   // appended, so the view (and this index) stay fixed on the selected moment.
   let pinnedIdx = $state<number | null>(null)
 
+  // The floating focus card: its placement (computed in the click handler and
+  // the ResizeObserver, never in a draw hook) and its measured element.
+  // `tipW`/`tipH` start as a sound estimate and are corrected from the real box
+  // on the next tick so the helper can place + clamp the card precisely.
+  let tip = $state<TipPlacement | null>(null)
+  let tipEl = $state<HTMLDivElement | undefined>(undefined)
+  let tipW = 200
+  let tipH = 96
+  // Assigned in init() so it closes over the live uPlot instance + pxRatio.
+  let recomputeTip: (() => void) | null = null
+
   // Detail of the inspected point: time + one row per series (label + value).
   // Recomputed when the pinned index changes; `data` is frozen while inspecting.
-  // Feeds the centered focus card.
+  // Feeds the floating focus card.
   const detail = $derived.by(() => {
     const idx = pinnedIdx
     if (idx === null || !data[0] || idx >= data[0].length) return null
@@ -95,13 +112,16 @@
     u.setData(data as uPlot.AlignedData)
   }
 
-  function onChartClick(): void {
+  function onChartClick(e: MouseEvent): void {
     if (!u) return
+    // Clicks within the card (incl. the close control) never re-pin.
+    if (tipEl?.contains(e.target as Node)) return
     const idx = u.cursor.idx
     if (idx == null) return
     // Click a point to inspect/freeze; clicking another moves the lock.
     const wasPinned = pinnedIdx !== null
     pinnedIdx = idx
+    recomputeTip?.()
     if (!wasPinned) {
       window.addEventListener('keydown', onKeydown)
       document.addEventListener('click', onOutside)
@@ -114,14 +134,21 @@
   }
 
   // Close on a click anywhere outside the chart container. Clicks on the plot
-  // re-pin via onChartClick (the focus card sits outside, so a click there closes).
+  // re-pin via onChartClick; clicks on the floating card are guarded there.
   function onOutside(e: MouseEvent): void {
     if (!el.contains(e.target as Node)) closeInspect()
+  }
+
+  function onCloseClick(e: MouseEvent): void {
+    // Don't bubble to onChartClick (re-pin) or onOutside (close).
+    e.stopPropagation()
+    closeInspect()
   }
 
   // Exit inspect mode: drop the highlight/card and resume live appends.
   function closeInspect(): void {
     pinnedIdx = null
+    tip = null
     window.removeEventListener('keydown', onKeydown)
     document.removeEventListener('click', onOutside)
     flushBuffer()
@@ -220,8 +247,43 @@
     u = new UPlot(opts, data as uPlot.AlignedData, el)
     el.addEventListener('click', onChartClick)
 
+    // Anchor the card at the pinned sample, in CSS px relative to `.chart`.
+    // valToPos(_, false) is CSS px relative to the plot area; add the plot-area
+    // offset (bbox is device px -> /pr) to reach `.chart` coords. Place with the
+    // current size estimate, then correct from the measured box on the next tick.
+    recomputeTip = async () => {
+      const chart = u
+      if (!chart || pinnedIdx === null) return
+      const idx = pinnedIdx
+      const pr = UPlot.pxRatio
+      const offX = chart.bbox.left / pr
+      const offY = chart.bbox.top / pr
+      const cx = chart.valToPos(data[0][idx], 'x', false) + offX
+      // Anchor at the topmost marker so an "above" card clears all series.
+      let cy = Infinity
+      for (let s = 1; s < data.length; s++) {
+        const y = data[s][idx]
+        if (y == null) continue
+        const py = chart.valToPos(y, 'y', false) + offY
+        if (py < cy) cy = py
+      }
+      if (cy === Infinity) {
+        tip = null
+        return
+      }
+      const bounds = { left: 0, top: 0, right: el.clientWidth, bottom: HEIGHT }
+      tip = tipPlacement(cx, cy, tipW, tipH, bounds)
+      await tick()
+      if (pinnedIdx !== idx || !tipEl) return
+      const r = tipEl.getBoundingClientRect()
+      tipW = r.width
+      tipH = r.height
+      tip = tipPlacement(cx, cy, tipW, tipH, bounds)
+    }
+
     ro = new ResizeObserver(() => {
       u?.setSize({ width: el.clientWidth, height: HEIGHT })
+      recomputeTip?.()
     })
     ro.observe(el)
   }
@@ -257,11 +319,13 @@
   })
 </script>
 
-<div class="chart" bind:this={el}></div>
-
-{#if detail}
-  <div class="focus" style="--accent: var(--{metric})">
-    <div class="focus-card">
+<div class="chart" bind:this={el} style="--accent: var(--{metric})">
+  {#if detail && tip}
+    <div
+      bind:this={tipEl}
+      class="focus-card"
+      style="left: {tip.left}px; top: {tip.top}px;"
+    >
       <div class="focus-head">
         <span class="focus-id">
           <span class="focus-dot"></span>
@@ -271,7 +335,7 @@
           class="close"
           type="button"
           aria-label="Close"
-          onclick={closeInspect}>✕</button
+          onclick={onCloseClick}>✕</button
         >
       </div>
       {#if detail.rows.length === 1}
@@ -294,8 +358,12 @@
         </div>
       {/if}
     </div>
-  </div>
-{/if}
+    <div
+      class="caret {tip.side}"
+      style="left: {tip.caretLeft}px; top: {tip.caretTop}px;"
+    ></div>
+  {/if}
+</div>
 
 <style>
   @keyframes inspect-in {
@@ -313,15 +381,11 @@
     overflow: visible;
   }
 
-  /* Centered focus card ----------------------------------------------- */
-  .focus {
-    display: flex;
-    justify-content: center;
-    margin-top: 8px;
-  }
-
+  /* Floating focus card ------------------------------------------------ */
   .focus-card {
-    position: relative;
+    position: absolute;
+    z-index: 2;
+    pointer-events: auto;
     min-width: 180px;
     max-width: 300px;
     padding: 12px 16px 11px;
@@ -333,17 +397,42 @@
     animation: inspect-in 120ms ease-out;
   }
 
-  .focus-card::before {
-    content: '';
+  /* Caret: a small accent triangle on the card edge pointing back at the marker. */
+  .caret {
     position: absolute;
-    top: -8px;
-    left: 50%;
-    transform: translateX(-50%);
+    z-index: 3;
+    pointer-events: none;
     width: 0;
     height: 0;
+    animation: inspect-in 120ms ease-out;
+  }
+
+  .caret.above {
+    border-left: 8px solid transparent;
+    border-right: 8px solid transparent;
+    border-top: 8px solid var(--accent);
+    transform: translate(-50%, 0);
+  }
+
+  .caret.below {
     border-left: 8px solid transparent;
     border-right: 8px solid transparent;
     border-bottom: 8px solid var(--accent);
+    transform: translate(-50%, -100%);
+  }
+
+  .caret.right {
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
+    border-right: 8px solid var(--accent);
+    transform: translate(-100%, -50%);
+  }
+
+  .caret.left {
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
+    border-left: 8px solid var(--accent);
+    transform: translate(0, -50%);
   }
 
   .focus-head {
