@@ -218,7 +218,7 @@
   {#if metric === 'cpu' || metric === 'mem'}
     {@const procs =
       metric === 'cpu' ? (snap?.topByCpu ?? []) : (snap?.topByMem ?? [])}
-    <div class="procs" style="--accent: var(--{metric})">
+    <div class="procs">
       <h2 class="proc-title">Top Processes</h2>
       {#if procs.length > 0}
         <table class="proc-table">
@@ -233,10 +233,10 @@
             {#each procs as p (p.pid)}
               <tr>
                 <td class="name">{p.name}</td>
-                <td class="num cpu" class:primary={metric === 'cpu'}
+                <td class="num cpu" class:lead={metric === 'cpu'}
                   >{formatPercent(p.cpuPct)}</td
                 >
-                <td class="num mem" class:primary={metric === 'mem'}
+                <td class="num mem" class:lead={metric === 'mem'}
                   >{formatBytes(p.memBytes)}</td
                 >
               </tr>
@@ -480,11 +480,11 @@
     font-weight: 500;
     color: var(--muted);
     text-align: right;
-    border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-bottom: 1px solid var(--hair);
   }
 
   .proc-table td {
-    padding: 7px 0;
+    padding: 5px 0;
     font-size: 0.85rem;
     color: var(--text);
   }
@@ -498,7 +498,7 @@
     color: var(--muted);
   }
 
-  .proc-table td.num.primary {
+  .proc-table td.num.lead {
     color: var(--text);
     font-weight: 500;
   }
