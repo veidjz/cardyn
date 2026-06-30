@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, untrack } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { metrics } from '$lib/metrics.svelte'
   import { chartSeries, alignSeries, isPercentMetric } from '$lib/chart'
@@ -56,45 +56,55 @@
   let destroyed = false
   // uPlot data matrix [xs, ...ys]; ys parallel to `series`.
   let data: number[][] = []
+  // Live points captured while inspecting (frozen). Flushed on close so the
+  // chart catches up to the current window. Capped at WINDOW.
+  let buffer: number[][] = []
 
-  // Index of the clicked/pinned data point (into `data`), or null when none.
-  // Tracks its logical point as the window scrolls; cleared once it falls off.
-  let pinned = $state<number | null>(null)
-  // Readout derived from the pinned point's current data (time + per-series
-  // value). Recomputed on click and on every live tick so it stays in sync.
-  let readout = $state<{
-    time: string
-    rows: { label: string; value: string }[]
-  } | null>(null)
+  // Index into `data` of the inspected point, or null when live. While not
+  // null the chart is frozen on that point: live updates are buffered, not
+  // appended, so the view (and this index) stay fixed on the selected moment.
+  let pinnedIdx = $state<number | null>(null)
 
-  function computeReadout(): void {
-    if (pinned === null || pinned < 0 || !data[0] || pinned >= data[0].length) {
-      readout = null
-      return
-    }
-    readout = {
-      time: formatClock(data[0][pinned]),
+  // Detail of the inspected point: time + one row per series (label + value).
+  // Recomputed when the pinned index changes; `data` is frozen while inspecting.
+  const detail = $derived.by(() => {
+    const idx = pinnedIdx
+    if (idx === null || !data[0] || idx >= data[0].length) return null
+    return {
+      time: formatClock(data[0][idx]),
       rows: series.map((s, i) => ({
         label: s.label,
-        value: valueFmt(data[i + 1][pinned as number]),
+        value: valueFmt(data[i + 1][idx]),
       })),
     }
+  })
+
+  function appendRow(row: number[]): void {
+    row.forEach((v, i) => data[i].push(v))
+    while (data[0].length > WINDOW) data.forEach((col) => col.shift())
+  }
+
+  // Flush buffered live points into the chart and resume the live window.
+  function flushBuffer(): void {
+    if (!u) return
+    buffer.forEach((row) => appendRow(row))
+    buffer = []
+    u.setData(data as uPlot.AlignedData)
   }
 
   function onChartClick(): void {
     if (!u) return
     const idx = u.cursor.idx
     if (idx == null) return
-    // Click the pinned point again to clear; otherwise re-pin.
-    pinned = pinned === idx ? null : idx
-    computeReadout()
+    // Click a point to inspect/freeze; clicking another moves the lock.
+    pinnedIdx = idx
     u.redraw()
   }
 
-  function clearPin(): void {
-    pinned = null
-    readout = null
-    u?.redraw()
+  // Exit inspect mode: drop the highlight/panel and resume live appends.
+  function closeInspect(): void {
+    pinnedIdx = null
+    flushBuffer()
   }
 
   onMount(() => {
@@ -119,6 +129,7 @@
     const accent = cssVar(`--${metric}`)
     const muted = cssVar('--muted')
     const hair = cssVar('--hair')
+    const bg = cssVar('--bg')
 
     const opts: uPlot.Options = {
       width: el.clientWidth,
@@ -157,15 +168,15 @@
         },
       ],
       hooks: {
-        // Subtle dashed vertical marker at the pinned point.
+        // Highlight the inspected point: vertical guide + a filled marker on
+        // every series at the pinned x.
         draw: [
           (chart: uPlot) => {
-            if (pinned === null || pinned < 0 || pinned >= chart.data[0].length)
-              return
-            const cx = Math.round(
-              chart.valToPos(chart.data[0][pinned], 'x', true),
-            )
+            const idx = pinnedIdx
+            if (idx === null || idx < 0 || idx >= chart.data[0].length) return
             const { ctx } = chart
+            const cx = Math.round(chart.valToPos(chart.data[0][idx], 'x', true))
+
             ctx.save()
             ctx.beginPath()
             ctx.setLineDash([2, 2])
@@ -175,6 +186,21 @@
             ctx.lineTo(cx, Math.round(chart.bbox.top + chart.bbox.height))
             ctx.stroke()
             ctx.restore()
+
+            for (let s = 1; s < chart.data.length; s++) {
+              const y = chart.data[s][idx]
+              if (y == null) continue
+              const cy = Math.round(chart.valToPos(y, 'y', true))
+              ctx.save()
+              ctx.beginPath()
+              ctx.fillStyle = accent
+              ctx.strokeStyle = bg
+              ctx.lineWidth = 2
+              ctx.arc(cx, cy, 4, 0, Math.PI * 2)
+              ctx.fill()
+              ctx.stroke()
+              ctx.restore()
+            }
           },
         ],
       },
@@ -189,25 +215,25 @@
     ro.observe(el)
   }
 
-  // Live update: append the newest snapshot value(s) on each 1 Hz tick, cap the
-  // window, then hand the data back to uPlot. No raf/animation loop.
+  // Live update on each 1 Hz tick. While inspecting (pinnedIdx not null) the
+  // chart is frozen: buffer the point instead of appending so the view holds
+  // on the selected moment. `untrack` keeps this effect tied only to
+  // `metrics.latest`, not to pinnedIdx. No raf/animation loop.
   $effect(() => {
     const snap = metrics.latest
-    if (!snap || !u) return
-    const vals = liveValues(snap)
-    if (vals.some((v) => v === null)) return
-    data[0].push(snap.tsMs / 1000)
-    vals.forEach((v, i) => data[i + 1].push(v as number))
-    while (data[0].length > WINDOW) {
-      data.forEach((col) => col.shift())
-      // The pinned point shifts left with the data; clear it once it falls off.
-      if (pinned !== null) {
-        pinned -= 1
-        if (pinned < 0) pinned = null
+    untrack(() => {
+      if (!snap || !u) return
+      const vals = liveValues(snap)
+      if (vals.some((v) => v === null)) return
+      const row = [snap.tsMs / 1000, ...(vals as number[])]
+      if (pinnedIdx !== null) {
+        buffer.push(row)
+        if (buffer.length > WINDOW) buffer.shift()
+        return
       }
-    }
-    u.setData(data as uPlot.AlignedData)
-    computeReadout()
+      appendRow(row)
+      u.setData(data as uPlot.AlignedData)
+    })
   })
 
   onDestroy(() => {
@@ -220,22 +246,25 @@
 
 <div class="chart" bind:this={el}></div>
 
-{#if readout}
-  <div class="readout">
-    <span class="time">{readout.time}</span>
-    <span class="vals">
-      {#each readout.rows as row (row.label)}
-        <span class="val"
-          ><span class="label">{row.label}</span> {row.value}</span
-        >
+{#if detail}
+  <div class="detail" style="--accent: var(--{metric})">
+    <div class="detail-head">
+      <span class="detail-time">{detail.time}</span>
+      <button
+        class="close"
+        type="button"
+        aria-label="Close"
+        onclick={closeInspect}>✕</button
+      >
+    </div>
+    <div class="detail-rows">
+      {#each detail.rows as row (row.label)}
+        <div class="detail-row">
+          <span class="detail-label">{row.label}</span>
+          <span class="detail-value">{row.value}</span>
+        </div>
       {/each}
-    </span>
-    <button
-      class="clear"
-      type="button"
-      aria-label="Clear pin"
-      onclick={clearPin}>✕</button
-    >
+    </div>
   </div>
 {/if}
 
@@ -244,38 +273,53 @@
     width: 100%;
   }
 
-  .readout {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+  .detail {
     margin-top: 8px;
-    padding: 6px 10px;
+    padding: 10px 12px;
     background: var(--panel);
     border: 1px solid var(--hair);
+    border-left: 3px solid var(--accent);
     border-radius: 8px;
     font-size: 0.8rem;
   }
 
-  .time {
-    color: var(--muted);
+  .detail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .detail-time {
+    color: var(--accent);
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
 
-  .vals {
+  .detail-rows {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .detail-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
     gap: 12px;
-    color: var(--text);
   }
 
-  .label {
+  .detail-label {
     color: var(--muted);
-    margin-right: 4px;
   }
 
-  .clear {
+  .detail-value {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .close {
     appearance: none;
-    margin-left: auto;
     background: transparent;
     border: none;
     color: var(--muted);
@@ -285,7 +329,7 @@
     cursor: pointer;
   }
 
-  .clear:hover {
+  .close:hover {
     color: var(--text);
   }
 </style>
