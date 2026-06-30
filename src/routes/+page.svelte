@@ -45,7 +45,7 @@
   })
 </script>
 
-<main class="app">
+<main class="app" class:center={route === 'main'}>
   {#if route === 'main'}
     <div class="grid">
       <!-- CPU -->
@@ -195,6 +195,10 @@
     height: 100vh;
     box-sizing: border-box;
     padding: 18px;
+    overflow-y: auto;
+  }
+
+  .app.center {
     display: flex;
     align-items: center;
     justify-content: center;
