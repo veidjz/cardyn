@@ -92,3 +92,15 @@ jobs:
           name: cardyn-debug-macos
           path: src-tauri/target/debug/bundle/**/*
           if-no-files-found: warn
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit
+        run: cargo audit --file src-tauri/Cargo.lock
