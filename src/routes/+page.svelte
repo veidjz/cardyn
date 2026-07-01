@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { metrics, startMetrics } from '$lib/metrics.svelte'
   import { formatFreq, formatBytes, formatBps } from '$lib/format'
   import { sparklineMax } from '$lib/chart'
@@ -9,6 +9,83 @@
   import type { MetricKey } from '$lib/types'
 
   let route = $state<'main' | { detail: MetricKey }>('main')
+
+  // Card element refs (for return-focus) and the last-opened metric, so that
+  // returning to the grid restores focus to the card that was opened.
+  let cardEls: Partial<Record<MetricKey, HTMLButtonElement>> = {}
+  let lastMetric: MetricKey | null = null
+
+  function open(metric: MetricKey) {
+    lastMetric = metric
+    route = { detail: metric }
+  }
+
+  async function back() {
+    route = 'main'
+    await tick()
+    if (lastMetric) cardEls[lastMetric]?.focus()
+  }
+
+  // Keyboard navigation among the cards. Left/Right move linearly through all
+  // cards (first..last), wrapping at the ends. Up/Down move within the current
+  // COLUMN using the live column count, wrapping within that column and never
+  // going sideways. Tab-wrap keeps linear focus from falling off either end.
+  const order: MetricKey[] = ['cpu', 'mem', 'gpu', 'disk', 'net']
+  let gridEl = $state<HTMLDivElement>()
+
+  function columnCount() {
+    if (!gridEl) return 1
+    const cols = getComputedStyle(gridEl)
+      .gridTemplateColumns.split(' ')
+      .filter((c) => c && c !== '0px')
+    return Math.max(1, cols.length)
+  }
+
+  function focusAt(i: number) {
+    cardEls[order[i]]?.focus()
+  }
+  // Cards fill the grid row-major, so card i sits at row floor(i/cols), col
+  // i%cols. `colCells` lists the indices sharing its column (top to bottom).
+  function colCells(i: number, cols: number) {
+    const cells: number[] = []
+    for (let j = i % cols; j < order.length; j += cols) cells.push(j)
+    return cells
+  }
+  function step(cells: number[], from: number, delta: number) {
+    const pos = cells.indexOf(from)
+    return cells[(pos + delta + cells.length) % cells.length]
+  }
+
+  function onCardKey(e: KeyboardEvent, metric: MetricKey) {
+    const i = order.indexOf(metric)
+    const last = order.length - 1
+    const cols = columnCount()
+    if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      focusAt((i + 1) % order.length)
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      focusAt((i - 1 + order.length) % order.length)
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      focusAt(step(colCells(i, cols), i, 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      focusAt(step(colCells(i, cols), i, -1))
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      focusAt(0)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      focusAt(last)
+    } else if (e.key === 'Tab' && !e.shiftKey && i === last) {
+      e.preventDefault()
+      focusAt(0)
+    } else if (e.key === 'Tab' && e.shiftKey && i === 0) {
+      e.preventDefault()
+      focusAt(last)
+    }
+  }
 
   const snap = $derived(metrics.latest)
 
@@ -45,21 +122,24 @@
   })
 </script>
 
-<main class="app" class:center={route === 'main'}>
+<main class="app">
   {#if route === 'main'}
-    <div class="grid">
+    <div class="grid" bind:this={gridEl}>
       <!-- CPU -->
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'cpu' })}
+        style="--focus: var(--cpu)"
+        bind:this={cardEls.cpu}
+        onclick={() => open('cpu')}
+        onkeydown={(e) => onCardKey(e, 'cpu')}
       >
         <header class="head">
           <span class="dot" style="background: var(--cpu);"></span>
           <span class="title">CPU</span>
         </header>
         <div class="primary">
-          <Ring value={cpu} color="var(--cpu)" />
+          <Ring value={cpu} color="var(--cpu)" fill />
         </div>
         <p class="sub">
           {cores === null ? '--' : cores} cores · {formatFreq(freq)}
@@ -76,14 +156,17 @@
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'mem' })}
+        style="--focus: var(--mem)"
+        bind:this={cardEls.mem}
+        onclick={() => open('mem')}
+        onkeydown={(e) => onCardKey(e, 'mem')}
       >
         <header class="head">
           <span class="dot" style="background: var(--mem);"></span>
           <span class="title">Memory</span>
         </header>
         <div class="primary">
-          <Ring value={memPct} color="var(--mem)" />
+          <Ring value={memPct} color="var(--mem)" fill />
         </div>
         <p class="sub">
           {formatBytes(snap?.memUsed ?? null)} / {formatBytes(
@@ -102,7 +185,10 @@
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'gpu' })}
+        style="--focus: var(--gpu)"
+        bind:this={cardEls.gpu}
+        onclick={() => open('gpu')}
+        onkeydown={(e) => onCardKey(e, 'gpu')}
       >
         <header class="head">
           <span class="dot" style="background: var(--gpu);"></span>
@@ -115,7 +201,7 @@
           <p class="sub">--</p>
         {:else}
           <div class="primary">
-            <Ring value={gpuUtil} color="var(--gpu)" />
+            <Ring value={gpuUtil} color="var(--gpu)" fill />
           </div>
           <p class="sub">
             {vram === null
@@ -135,14 +221,17 @@
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'disk' })}
+        style="--focus: var(--disk)"
+        bind:this={cardEls.disk}
+        onclick={() => open('disk')}
+        onkeydown={(e) => onCardKey(e, 'disk')}
       >
         <header class="head">
           <span class="dot" style="background: var(--disk);"></span>
           <span class="title">Disk</span>
         </header>
         <div class="primary">
-          <Ring value={diskPct} color="var(--disk)" />
+          <Ring value={diskPct} color="var(--disk)" fill />
         </div>
         <p class="sub">
           {snap && snap.diskTotal > 0
@@ -161,7 +250,10 @@
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'net' })}
+        style="--focus: var(--net)"
+        bind:this={cardEls.net}
+        onclick={() => open('net')}
+        onkeydown={(e) => onCardKey(e, 'net')}
       >
         <header class="head">
           <span class="dot" style="background: var(--net);"></span>
@@ -186,7 +278,7 @@
       </button>
     </div>
   {:else}
-    <Detail metric={route.detail} onBack={() => (route = 'main')} />
+    <Detail metric={route.detail} onBack={back} />
   {/if}
 </main>
 
@@ -198,21 +290,25 @@
     overflow-y: auto;
   }
 
-  .app.center {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    grid-auto-rows: 1fr;
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(min-content, 1fr);
     gap: 16px;
     width: 100%;
-    max-width: 760px;
     height: 100%;
-    max-height: 500px;
+  }
+
+  @media (min-width: 600px) {
+    .grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  @media (min-width: 720px) {
+    .grid {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
   }
 
   .card {
@@ -239,6 +335,11 @@
     transform: translateY(-2px);
   }
 
+  .card:focus-visible {
+    outline: 2px solid var(--focus, var(--text));
+    outline-offset: 2px;
+  }
+
   .head {
     display: flex;
     align-items: center;
@@ -258,13 +359,16 @@
   }
 
   .primary {
+    flex: 1 1 auto;
+    min-height: var(--rsz);
     display: grid;
     place-items: center;
-    min-height: 96px;
+    width: 100%;
+    --rsz: clamp(120px, 22vmin, 240px);
   }
 
   .big {
-    font-size: 1.4rem;
+    font-size: clamp(1.4rem, 5vmin, 2.6rem);
     font-weight: 600;
     color: var(--text);
   }

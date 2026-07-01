@@ -348,7 +348,12 @@
   })
 </script>
 
-<div class="chart" bind:this={el} style="--accent: var(--{metric})">
+<div
+  class="chart"
+  bind:this={el}
+  style="--accent: var(--{metric})"
+  aria-hidden="true"
+>
   {#if detail && tip}
     <div
       bind:this={tipEl}

@@ -61,11 +61,30 @@
 
   // Network
   const netTotal = $derived(snap ? snap.netRxBps + snap.netTxBps : null)
+
+  // Move keyboard focus to the Back button on mount so keyboard/SR users land
+  // inside the detail instead of at <body>.
+  let backEl = $state<HTMLButtonElement | undefined>(undefined)
+  $effect(() => {
+    backEl?.focus()
+  })
+
+  // Back is the only focusable control here, so trap Tab/Shift+Tab on it to
+  // keep focus inside the app instead of falling into <body>.
+  function onBackKey(e: KeyboardEvent) {
+    if (e.key === 'Tab') e.preventDefault()
+  }
 </script>
 
 <section class="detail">
   <header class="head">
-    <button class="back" type="button" onclick={onBack}>‹ Back</button>
+    <button
+      class="back"
+      type="button"
+      bind:this={backEl}
+      onclick={onBack}
+      onkeydown={onBackKey}>‹ Back</button
+    >
     <span class="dot" style="background: {meta.color};"></span>
     <h1 class="title">{meta.label}</h1>
   </header>
@@ -276,6 +295,11 @@
 
   .back:hover {
     border-color: var(--muted);
+  }
+
+  .back:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
   }
 
   .dot {

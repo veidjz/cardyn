@@ -24,6 +24,7 @@
   {height}
   viewBox="0 0 {width} {height}"
   preserveAspectRatio="none"
+  aria-hidden="true"
 >
   <polyline
     {points}
