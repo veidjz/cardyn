@@ -91,7 +91,7 @@
   })
 </script>
 
-<main class="app" class:center={route === 'main'}>
+<main class="app">
   {#if route === 'main'}
     <div class="grid">
       <!-- CPU -->
@@ -259,26 +259,19 @@
     overflow-y: auto;
   }
 
-  .app.center {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
     grid-auto-rows: 1fr;
     gap: 16px;
     width: 100%;
-    max-width: 760px;
     height: 100%;
-    max-height: 500px;
   }
 
   .card {
     appearance: none;
     box-sizing: border-box;
+    container-type: size;
     width: 100%;
     font: inherit;
     color: inherit;
@@ -327,10 +320,11 @@
     display: grid;
     place-items: center;
     min-height: 96px;
+    --ring-size: clamp(84px, 50cqmin, 200px);
   }
 
   .big {
-    font-size: 1.4rem;
+    font-size: clamp(1.4rem, 9cqmin, 3rem);
     font-weight: 600;
     color: var(--text);
   }

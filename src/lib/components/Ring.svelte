@@ -22,10 +22,13 @@
   const arc = $derived(ringFraction(value, max) * circumference)
 </script>
 
-<div class="ring" style="width: {size}px; height: {size}px;">
+<div
+  class="ring"
+  style="width: var(--ring-size, {size}px); height: var(--ring-size, {size}px);"
+>
   <svg
-    width={size}
-    height={size}
+    width="100%"
+    height="100%"
     viewBox="0 0 {size} {size}"
     aria-hidden="true"
   >
@@ -53,7 +56,7 @@
   <div
     class="label"
     class:muted={value === null}
-    style="font-size: {size * 0.2}px"
+    style="font-size: calc(var(--ring-size, {size}px) * 0.2);"
   >
     {formatPercent(value)}
   </div>
