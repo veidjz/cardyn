@@ -23,7 +23,12 @@
 </script>
 
 <div class="ring" style="width: {size}px; height: {size}px;">
-  <svg width={size} height={size} viewBox="0 0 {size} {size}">
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 {size} {size}"
+    aria-hidden="true"
+  >
     <circle
       cx={center}
       cy={center}

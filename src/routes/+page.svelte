@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { metrics, startMetrics } from '$lib/metrics.svelte'
   import { formatFreq, formatBytes, formatBps } from '$lib/format'
   import { sparklineMax } from '$lib/chart'
@@ -9,6 +9,22 @@
   import type { MetricKey } from '$lib/types'
 
   let route = $state<'main' | { detail: MetricKey }>('main')
+
+  // Card element refs (for return-focus) and the last-opened metric, so that
+  // returning to the grid restores focus to the card that was opened.
+  let cardEls: Partial<Record<MetricKey, HTMLButtonElement>> = {}
+  let lastMetric: MetricKey | null = null
+
+  function open(metric: MetricKey) {
+    lastMetric = metric
+    route = { detail: metric }
+  }
+
+  async function back() {
+    route = 'main'
+    await tick()
+    if (lastMetric) cardEls[lastMetric]?.focus()
+  }
 
   const snap = $derived(metrics.latest)
 
@@ -52,7 +68,8 @@
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'cpu' })}
+        bind:this={cardEls.cpu}
+        onclick={() => open('cpu')}
       >
         <header class="head">
           <span class="dot" style="background: var(--cpu);"></span>
@@ -76,7 +93,8 @@
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'mem' })}
+        bind:this={cardEls.mem}
+        onclick={() => open('mem')}
       >
         <header class="head">
           <span class="dot" style="background: var(--mem);"></span>
@@ -102,7 +120,8 @@
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'gpu' })}
+        bind:this={cardEls.gpu}
+        onclick={() => open('gpu')}
       >
         <header class="head">
           <span class="dot" style="background: var(--gpu);"></span>
@@ -135,7 +154,8 @@
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'disk' })}
+        bind:this={cardEls.disk}
+        onclick={() => open('disk')}
       >
         <header class="head">
           <span class="dot" style="background: var(--disk);"></span>
@@ -161,7 +181,8 @@
       <button
         class="card"
         type="button"
-        onclick={() => (route = { detail: 'net' })}
+        bind:this={cardEls.net}
+        onclick={() => open('net')}
       >
         <header class="head">
           <span class="dot" style="background: var(--net);"></span>
@@ -186,7 +207,7 @@
       </button>
     </div>
   {:else}
-    <Detail metric={route.detail} onBack={() => (route = 'main')} />
+    <Detail metric={route.detail} onBack={back} />
   {/if}
 </main>
 
@@ -237,6 +258,11 @@
 
   .card:hover {
     transform: translateY(-2px);
+  }
+
+  .card:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
   }
 
   .head {
