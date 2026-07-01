@@ -62,6 +62,9 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }));
+        // Registered after single-instance so the app can check for and verify
+        // signed updates from the release endpoint.
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     builder
