@@ -8,12 +8,14 @@
     color = 'var(--cpu)',
     size = 108,
     stroke = 9,
+    fill = false,
   }: {
     value: number | null
     max?: number
     color?: string
     size?: number
     stroke?: number
+    fill?: boolean
   } = $props()
 
   const center = $derived(size / 2)
@@ -22,10 +24,7 @@
   const arc = $derived(ringFraction(value, max) * circumference)
 </script>
 
-<div
-  class="ring"
-  style="width: var(--ring-size, {size}px); height: var(--ring-size, {size}px);"
->
+<div class="ring" class:fill style="--rs: {size}px;">
   <svg
     width="100%"
     height="100%"
@@ -53,11 +52,7 @@
       transform="rotate(-90 {center} {center})"
     />
   </svg>
-  <div
-    class="label"
-    class:muted={value === null}
-    style="font-size: calc(var(--ring-size, {size}px) * 0.2);"
-  >
+  <div class="label" class:muted={value === null}>
     {formatPercent(value)}
   </div>
 </div>
@@ -67,6 +62,13 @@
     position: relative;
     display: grid;
     place-items: center;
+    width: var(--rs);
+    height: var(--rs);
+  }
+
+  .ring.fill {
+    width: var(--rsz, var(--rs));
+    height: var(--rsz, var(--rs));
   }
 
   svg {
@@ -81,6 +83,11 @@
     position: absolute;
     font-weight: 600;
     color: var(--text);
+    font-size: calc(var(--rs) * 0.2);
+  }
+
+  .ring.fill .label {
+    font-size: calc(var(--rsz, var(--rs)) * 0.2);
   }
 
   .label.muted {

@@ -26,33 +26,64 @@
     if (lastMetric) cardEls[lastMetric]?.focus()
   }
 
-  // Keyboard navigation among the cards: arrows/Home/End move focus (linear,
-  // wrapping), and Tab-wrap keeps focus from ever falling off either end.
+  // Keyboard navigation among the cards. Left/Right move linearly through all
+  // cards (first..last), wrapping at the ends. Up/Down move within the current
+  // COLUMN using the live column count, wrapping within that column and never
+  // going sideways. Tab-wrap keeps linear focus from falling off either end.
   const order: MetricKey[] = ['cpu', 'mem', 'gpu', 'disk', 'net']
-  function focusCard(i: number) {
-    const m = order[(i + order.length) % order.length]
-    cardEls[m]?.focus()
+  let gridEl = $state<HTMLDivElement>()
+
+  function columnCount() {
+    if (!gridEl) return 1
+    const cols = getComputedStyle(gridEl)
+      .gridTemplateColumns.split(' ')
+      .filter((c) => c && c !== '0px')
+    return Math.max(1, cols.length)
   }
+
+  function focusAt(i: number) {
+    cardEls[order[i]]?.focus()
+  }
+  // Cards fill the grid row-major, so card i sits at row floor(i/cols), col
+  // i%cols. `colCells` lists the indices sharing its column (top to bottom).
+  function colCells(i: number, cols: number) {
+    const cells: number[] = []
+    for (let j = i % cols; j < order.length; j += cols) cells.push(j)
+    return cells
+  }
+  function step(cells: number[], from: number, delta: number) {
+    const pos = cells.indexOf(from)
+    return cells[(pos + delta + cells.length) % cells.length]
+  }
+
   function onCardKey(e: KeyboardEvent, metric: MetricKey) {
     const i = order.indexOf(metric)
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+    const last = order.length - 1
+    const cols = columnCount()
+    if (e.key === 'ArrowRight') {
       e.preventDefault()
-      focusCard(i + 1)
-    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      focusAt((i + 1) % order.length)
+    } else if (e.key === 'ArrowLeft') {
       e.preventDefault()
-      focusCard(i - 1)
+      focusAt((i - 1 + order.length) % order.length)
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      focusAt(step(colCells(i, cols), i, 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      focusAt(step(colCells(i, cols), i, -1))
     } else if (e.key === 'Home') {
       e.preventDefault()
-      focusCard(0)
+      focusAt(0)
     } else if (e.key === 'End') {
       e.preventDefault()
-      focusCard(order.length - 1)
-    } else if (e.key === 'Tab' && !e.shiftKey && i === order.length - 1) {
+      focusAt(last)
+    } else if (e.key === 'Tab' && !e.shiftKey && i === last) {
       e.preventDefault()
-      focusCard(0)
+      focusAt(0)
     } else if (e.key === 'Tab' && e.shiftKey && i === 0) {
       e.preventDefault()
-      focusCard(order.length - 1)
+      focusAt(last)
     }
   }
 
@@ -93,7 +124,7 @@
 
 <main class="app">
   {#if route === 'main'}
-    <div class="grid">
+    <div class="grid" bind:this={gridEl}>
       <!-- CPU -->
       <button
         class="card"
@@ -108,7 +139,7 @@
           <span class="title">CPU</span>
         </header>
         <div class="primary">
-          <Ring value={cpu} color="var(--cpu)" />
+          <Ring value={cpu} color="var(--cpu)" fill />
         </div>
         <p class="sub">
           {cores === null ? '--' : cores} cores · {formatFreq(freq)}
@@ -135,7 +166,7 @@
           <span class="title">Memory</span>
         </header>
         <div class="primary">
-          <Ring value={memPct} color="var(--mem)" />
+          <Ring value={memPct} color="var(--mem)" fill />
         </div>
         <p class="sub">
           {formatBytes(snap?.memUsed ?? null)} / {formatBytes(
@@ -170,7 +201,7 @@
           <p class="sub">--</p>
         {:else}
           <div class="primary">
-            <Ring value={gpuUtil} color="var(--gpu)" />
+            <Ring value={gpuUtil} color="var(--gpu)" fill />
           </div>
           <p class="sub">
             {vram === null
@@ -200,7 +231,7 @@
           <span class="title">Disk</span>
         </header>
         <div class="primary">
-          <Ring value={diskPct} color="var(--disk)" />
+          <Ring value={diskPct} color="var(--disk)" fill />
         </div>
         <p class="sub">
           {snap && snap.diskTotal > 0
@@ -261,17 +292,28 @@
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-    grid-auto-rows: 1fr;
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(min-content, 1fr);
     gap: 16px;
     width: 100%;
     height: 100%;
   }
 
+  @media (min-width: 600px) {
+    .grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  @media (min-width: 720px) {
+    .grid {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+  }
+
   .card {
     appearance: none;
     box-sizing: border-box;
-    container-type: size;
     width: 100%;
     font: inherit;
     color: inherit;
@@ -317,14 +359,16 @@
   }
 
   .primary {
+    flex: 1 1 auto;
+    min-height: var(--rsz);
     display: grid;
     place-items: center;
-    min-height: 96px;
-    --ring-size: clamp(84px, 50cqmin, 200px);
+    width: 100%;
+    --rsz: clamp(120px, 22vmin, 240px);
   }
 
   .big {
-    font-size: clamp(1.4rem, 9cqmin, 3rem);
+    font-size: clamp(1.4rem, 5vmin, 2.6rem);
     font-weight: 600;
     color: var(--text);
   }
