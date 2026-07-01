@@ -40,7 +40,7 @@
       fill="none"
       stroke={color}
       stroke-width={stroke}
-      stroke-linecap="round"
+      stroke-linecap={arc > 0 ? 'round' : 'butt'}
       stroke-dasharray="{arc} {circumference}"
       transform="rotate(-90 {center} {center})"
     />
