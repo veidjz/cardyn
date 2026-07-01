@@ -26,6 +26,36 @@
     if (lastMetric) cardEls[lastMetric]?.focus()
   }
 
+  // Keyboard navigation among the cards: arrows/Home/End move focus (linear,
+  // wrapping), and Tab-wrap keeps focus from ever falling off either end.
+  const order: MetricKey[] = ['cpu', 'mem', 'gpu', 'disk', 'net']
+  function focusCard(i: number) {
+    const m = order[(i + order.length) % order.length]
+    cardEls[m]?.focus()
+  }
+  function onCardKey(e: KeyboardEvent, metric: MetricKey) {
+    const i = order.indexOf(metric)
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      focusCard(i + 1)
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      focusCard(i - 1)
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      focusCard(0)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      focusCard(order.length - 1)
+    } else if (e.key === 'Tab' && !e.shiftKey && i === order.length - 1) {
+      e.preventDefault()
+      focusCard(0)
+    } else if (e.key === 'Tab' && e.shiftKey && i === 0) {
+      e.preventDefault()
+      focusCard(order.length - 1)
+    }
+  }
+
   const snap = $derived(metrics.latest)
 
   // CPU
@@ -68,8 +98,10 @@
       <button
         class="card"
         type="button"
+        style="--focus: var(--cpu)"
         bind:this={cardEls.cpu}
         onclick={() => open('cpu')}
+        onkeydown={(e) => onCardKey(e, 'cpu')}
       >
         <header class="head">
           <span class="dot" style="background: var(--cpu);"></span>
@@ -93,8 +125,10 @@
       <button
         class="card"
         type="button"
+        style="--focus: var(--mem)"
         bind:this={cardEls.mem}
         onclick={() => open('mem')}
+        onkeydown={(e) => onCardKey(e, 'mem')}
       >
         <header class="head">
           <span class="dot" style="background: var(--mem);"></span>
@@ -120,8 +154,10 @@
       <button
         class="card"
         type="button"
+        style="--focus: var(--gpu)"
         bind:this={cardEls.gpu}
         onclick={() => open('gpu')}
+        onkeydown={(e) => onCardKey(e, 'gpu')}
       >
         <header class="head">
           <span class="dot" style="background: var(--gpu);"></span>
@@ -154,8 +190,10 @@
       <button
         class="card"
         type="button"
+        style="--focus: var(--disk)"
         bind:this={cardEls.disk}
         onclick={() => open('disk')}
+        onkeydown={(e) => onCardKey(e, 'disk')}
       >
         <header class="head">
           <span class="dot" style="background: var(--disk);"></span>
@@ -181,8 +219,10 @@
       <button
         class="card"
         type="button"
+        style="--focus: var(--net)"
         bind:this={cardEls.net}
         onclick={() => open('net')}
+        onkeydown={(e) => onCardKey(e, 'net')}
       >
         <header class="head">
           <span class="dot" style="background: var(--net);"></span>
@@ -261,7 +301,7 @@
   }
 
   .card:focus-visible {
-    outline: 2px solid var(--text);
+    outline: 2px solid var(--focus, var(--text));
     outline-offset: 2px;
   }
 
